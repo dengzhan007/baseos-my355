@@ -73,9 +73,23 @@ copy_optional() {
 
 # Mainline rtw88 driver for the SDIO RTL8821CS Wi-Fi function.
 copy_required "$SRC/rtw88/rtw8821c_fw.bin" "$OUT/rtw88/rtw8821c_fw.bin"
-# Mainline Bluetooth driver tries the RTL8821CS names, with RTL8723BS fallback.
+# Mainline Bluetooth driver requires both the RTL8821CS UART firmware and
+# its chip-specific configuration (btrtl marks config_needed=true for 8821CS).
 copy_required "$SRC/rtl_bt/rtl8821cs_fw.bin" "$OUT/rtl_bt/rtl8821cs_fw.bin"
-copy_optional "$SRC/rtl_bt/rtl8821cs_config.bin" "$OUT/rtl_bt/rtl8821cs_config.bin"
+if [ -s "$SRC/rtl_bt/rtl8821cs_config.bin" ]; then
+  copy_required "$SRC/rtl_bt/rtl8821cs_config.bin" "$OUT/rtl_bt/rtl8821cs_config.bin"
+else
+  # Some published linux-firmware source bundles omit this 29-byte blob.
+  # Pin the known RTL8821CS SDIO/UART config from the ROCKNIX
+  # RTL8821CS-firmware package rather than silently shipping no config.
+  # Upstream blob MD5: 37338e0b8861a20ce877c0a10cbaaae3
+  printf '%b' '\\125\\253\\043\\207\\027\\000\\014\\000\\020\\002\\200\\222\\004\\120\\305\\352\\031\\341\\033\\375\\257\\137\\001\\244\\013\\344\\000\\001\\010' > "$OUT/rtl_bt/rtl8821cs_config.bin"
+fi
+RTL8821CS_CONFIG_SHA256="$(baseos_sha256 "$OUT/rtl_bt/rtl8821cs_config.bin")"
+[ "$RTL8821CS_CONFIG_SHA256" = "8be5be3b7a4a670ad547bd6a2c572305fbe0da7845f626df5ed474da9062ed9e" ] || {
+  echo "RTL8821CS config blob SHA-256 mismatch: $RTL8821CS_CONFIG_SHA256" >&2
+  exit 1
+}
 copy_optional "$SRC/rtl_bt/rtl8723bs_fw.bin" "$OUT/rtl_bt/rtl8723bs_fw.bin"
 copy_optional "$SRC/rtl_bt/rtl8723bs_config.bin" "$OUT/rtl_bt/rtl8723bs_config.bin"
 
@@ -91,6 +105,8 @@ wireless_regdb_version=$REGDB_VERSION
 wireless_regdb_sha256=$REGDB_SHA256
 required_wifi_firmware=rtw88/rtw8821c_fw.bin
 required_bluetooth_firmware=rtl_bt/rtl8821cs_fw.bin
+required_bluetooth_config=rtl_bt/rtl8821cs_config.bin
+bluetooth_config_sha256=8be5be3b7a4a670ad547bd6a2c572305fbe0da7845f626df5ed474da9062ed9e
 regulatory_database=regulatory.db,regulatory.db.p7s
 EOF
 (
