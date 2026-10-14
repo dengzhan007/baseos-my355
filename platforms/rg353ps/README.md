@@ -50,10 +50,23 @@ bootloader under `work/rg353ps/`.
   A successful compile is not proof of a successful boot; the first full image
   needs real-device testing.
 
+## Kernel bundle
+
+Build the separate Linux kernel/DTB/modules bundle with:
+
+```sh
+./platforms/rg353ps/build-kernel.sh
+```
+
+The script uses the pinned Linux 7.2.7 source, the ROCKNIX RK3566 kernel
+configuration and device patches, and produces `work/rg353ps/kernel/output/`.
+The generated `Image`, `rk3566-anbernic-rg353ps.dtb`, and modules archive are
+matched outputs, but are still intermediate artifacts, not an SD-card image.
+See [kernel input provenance](kernel/UPSTREAM.md).
+
 ## Next milestones
 
-1. Choose and pin the RG353PS kernel and Linux DTB source (ROCKNIX is the
-   baseline reference).
+1. Build the kernel bundle and resolve any patch/build failures in CI.
 2. Build a rootfs without assuming Miyoo-specific vendor libraries or firmware.
 3. Define and test the RG353PS SD-card partition/boot configuration and produce
    a complete image without internal-flash modifications.
