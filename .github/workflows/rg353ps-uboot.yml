@@ -1,4 +1,4 @@
-name: RG353PS boot components
+name: RG353PS bring-up build
 
 on:
   pull_request:
@@ -13,38 +13,56 @@ permissions:
   contents: read
 
 concurrency:
-  group: rg353ps-${{ github.event.pull_request.number || github.ref }}
+  group: rg353ps-${ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-rg353ps:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Enable ARM64 container emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Check shell syntax
         run: |
           sh -n tools/common.sh
           sh -n platforms/rg353ps/build-uboot.sh
           sh -n platforms/rg353ps/build-kernel.sh
+          sh -n platforms/rg353ps/build-firmware.sh
+          sh -n platforms/rg353ps/build-rootfs.sh
+          sh -n platforms/rg353ps/build-image.sh
 
-      - name: Build RG353PS U-Boot region
+      - name: Build RG353PS U-Boot
         run: ./platforms/rg353ps/build-uboot.sh
+
+      - name: Collect RTL8821CS firmware
+        run: ./platforms/rg353ps/build-firmware.sh
 
       - name: Build RG353PS Linux kernel, DTB and modules
         run: ./platforms/rg353ps/build-kernel.sh
 
-      - name: Publish intermediate artifacts
+      - name: Build minimal BusyBox rootfs
+        run: ./platforms/rg353ps/build-rootfs.sh
+
+      - name: Assemble SD smoke image
+        run: ./platforms/rg353ps/build-image.sh
+
+      - name: Publish RG353PS smoke image and component metadata
         uses: actions/upload-artifact@v4
         with:
-          name: rg353ps-boot-components
+          name: baseos-rg353ps-smoke-image
           if-no-files-found: error
           path: |
-            work/rg353ps/rg353ps-uboot.bin
-            work/rg353ps/rg353ps-u-boot.itb
-            work/rg353ps/rg353ps-idbloader.img
+            work/rg353ps/baseos-rg353ps-smoke.img.gz
+            work/rg353ps/baseos-rg353ps-smoke.img.sha256
             work/rg353ps/rg353ps-uboot.json
             work/rg353ps/rg353ps-uboot.sha256
-            work/rg353ps/kernel/output/**
+            work/rg353ps/kernel/output/kernel-build.json
+            work/rg353ps/firmware/firmware-manifest.txt
+            work/rg353ps/firmware/SHA256SUMS

@@ -38,37 +38,38 @@ The generated combined bootloader follows ROCKNIX's layout helper:
 The script also saves the FIT and checksum/metadata alongside the combined
 bootloader under `work/rg353ps/`.
 
-## Porting constraints
+## Build a first-boot SD smoke image
 
-- Keep this target separate from `build-all.sh` and the current `work/my355`
-  pipeline until the kernel, rootfs and card layout are explicitly implemented.
-- Do not use Miyoo Flip's preloader installer, `mtd5` patch, `miyoo355_fw.img`,
-  Android boot image, stock harvest, or Miyoo-specific `my355` U-Boot commands.
-- Use the Linux DTB `rk3566-anbernic-rg353ps.dtb` from a verified RG353PS
-  kernel build. Do not substitute U-Boot's control DTB for the Linux DTB.
-- Test first from a removable SD card and retain a known-good recovery card.
-  A successful compile is not proof of a successful boot; the first full image
-  needs real-device testing.
-
-## Kernel bundle
-
-Build the separate Linux kernel/DTB/modules bundle with:
+The scripts are deliberately separated from the Miyoo Flip build. From the
+repository root, run:
 
 ```sh
+./platforms/rg353ps/build-uboot.sh
 ./platforms/rg353ps/build-kernel.sh
+./platforms/rg353ps/build-firmware.sh
+./platforms/rg353ps/build-rootfs.sh
+./platforms/rg353ps/build-image.sh
 ```
 
-The script uses the pinned Linux 7.2.7 source, the ROCKNIX RK3566 kernel
-configuration and device patches, and produces `work/rg353ps/kernel/output/`.
-The generated `Image`, `rk3566-anbernic-rg353ps.dtb`, and modules archive are
-matched outputs, but are still intermediate artifacts, not an SD-card image.
-See [kernel input provenance](kernel/UPSTREAM.md).
+The build uses U-Boot v2026.01 / Anbernic RGxx3 defconfig, Linux 7.2.7 with the
+ROCKNIX RK3566 configuration and hardware patches, and the matching RG353PS
+Linux DTB. The RTL8821CS mainline Wi-Fi/Bluetooth firmware and signed regulatory
+database are collected separately. Kernel config/patch provenance is in
+[kernel/UPSTREAM.md](kernel/UPSTREAM.md).
 
-## Next milestones
+The result is `work/rg353ps/baseos-rg353ps-smoke.img.gz`, a 2 GiB SD-card
+**bring-up image**. It boots a minimal BusyBox userspace and displays diagnostic
+messages; it does not yet launch a game frontend and does not include BaseOS's
+read-only/A-B update system. It is not considered supported until it is tested
+on real RG353PS hardware.
 
-1. Build the kernel bundle and resolve any patch/build failures in CI.
-2. Build a rootfs without assuming Miyoo-specific vendor libraries or firmware.
-3. Define and test the RG353PS SD-card partition/boot configuration and produce
-   a complete image without internal-flash modifications.
-4. Port BaseOS boot, read-only rootfs, settings and update behavior in separate
-   stages, with shell tests and hardware validation between them.
+## Porting safety constraints
+
+- Keep this target isolated from `build-all.sh` and `work/my355`; the existing
+  Miyoo Flip target must continue to build unchanged.
+- Never use the Miyoo preloader installer, `mtd5` patch, `miyoo355_fw.img`,
+  Android boot image, stock harvest or `my355`-specific U-Boot commands on the RG353PS.
+- Keep U-Boot's control DTB separate from the Linux DTB
+  `rk3566-anbernic-rg353ps.dtb`.
+- The image builder only writes a disk-image file. When testing, write the
+  compressed image to a spare TF card and keep the original system card intact.
