@@ -23,6 +23,8 @@ KREL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["kernel_
 MODULES_TARBALL="$KERNEL_OUT/modules-$KREL.tar.zst"
 [ -s "$MODULES_TARBALL" ] || { echo "missing kernel modules bundle: $MODULES_TARBALL" >&2; exit 1; }
 [ -s "$FIRMWARE_OUT/rtw88/rtw8821c_fw.bin" ] || { echo "missing RTL8821CS Wi-Fi firmware" >&2; exit 1; }
+[ -s "$FIRMWARE_OUT/rtl_bt/rtl8821cs_fw.bin" ] || { echo "missing RTL8821CS Bluetooth firmware" >&2; exit 1; }
+[ -s "$FIRMWARE_OUT/rtl_bt/rtl8821cs_config.bin" ] || { echo "missing required RTL8821CS Bluetooth config" >&2; exit 1; }
 
 baseos_require_aarch64
 mkdir -p "$WORK"
