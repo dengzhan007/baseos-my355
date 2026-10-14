@@ -62,7 +62,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
       --partition-guid=2:"$ROOT_PARTUUID" "$IMG"
 
     partition_value() {
-      sgdisk --info="$1" "$IMG" | sed -n "s/^$2: *//p"
+      sgdisk --info="$1" "$IMG" | sed -n "s/^$2: *\\([0-9][0-9]*\\).*/\\1/p"
     }
     BOOT_START="$(partition_value 1 "First sector")"
     BOOT_END="$(partition_value 1 "Last sector")"
