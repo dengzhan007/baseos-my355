@@ -53,8 +53,11 @@ repository root, run:
 
 The build uses U-Boot v2026.01 / Anbernic RGxx3 defconfig, Linux 7.2.7 with the
 ROCKNIX RK3566 configuration and hardware patches, and the matching RG353PS
-Linux DTB. The RTL8821CS mainline Wi-Fi/Bluetooth firmware and signed regulatory
-database are collected separately. Kernel config/patch provenance is in
+Linux DTB. The RTL8821CS mainline Wi-Fi/Bluetooth firmware is collected
+separately. Because built-in cfg80211 requests its signed regulatory database
+early in boot, regulatory.db and its signature are also embedded in the kernel;
+the current wireless-regdb signing certificate is included as an additional
+trusted key. Kernel config/patch and certificate provenance is in
 [kernel/UPSTREAM.md](kernel/UPSTREAM.md).
 
 The result is `work/rg353ps/baseos-rg353ps-smoke.img.gz`, a 2 GiB SD-card

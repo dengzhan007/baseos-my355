@@ -20,6 +20,17 @@ compiles that DTB from the exact same patched source tree as the `Image` and
 kernel modules; it does not substitute the U-Boot control tree for Linux's DTB.
 
 The config file's ROCKNIX-specific initramfs placeholder is deliberately cleared
-by the builder because BaseOS will use a root partition on the SD card. The
-result is only a kernel bundle. A matching full SD-card image, userspace,
+by the builder because BaseOS will use a root partition on the SD card.
+
+The built-in cfg80211 requests the regulatory database early in boot, before
+the SD-card root filesystem can reliably supply firmware files. The builder
+therefore embeds regulatory.db and regulatory.db.p7s through
+CONFIG_EXTRA_FIRMWARE. The 2026-05-30 wireless-regdb database is signed by
+Chen-Yu Tsai (wens); its X.509 certificate is pinned at
+[kernel/certs/wens.x509.pem](certs/wens.x509.pem), converted to DER during the
+build, and added to cfg80211's extra built-in trusted key list. Signature
+verification remains enabled. Database, signature, and certificate hashes
+are recorded in kernel-build.json.
+
+The result is only a kernel bundle. A matching full SD-card image, userspace,
 firmware files, boot arguments, and real-device validation are still required.
