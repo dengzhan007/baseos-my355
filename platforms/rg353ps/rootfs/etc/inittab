@@ -1,0 +1,6 @@
+# BusyBox init table for the RG353PS bring-up image.
+::sysinit:/etc/init.d/rcS
+ttyS2::respawn:/sbin/getty -L 1500000 ttyS2 vt100
+tty1::respawn:/sbin/getty -L 0 tty1 vt100
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r
