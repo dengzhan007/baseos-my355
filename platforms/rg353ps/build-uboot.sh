@@ -108,6 +108,12 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
 
     test -s spl/u-boot-spl.bin
     test -s u-boot.itb
+    FIT_BYTES="$(stat -c %s u-boot.itb)"
+    FIT_LIMIT="$(( (32768 - 16320) * 512 ))"
+    [ "$FIT_BYTES" -le "$FIT_LIMIT" ] || {
+      echo "U-Boot FIT exceeds the conservative 16 MiB bootloader region" >&2
+      exit 1
+    }
     tools/mkimage -n rk3568 -T rksd \
       -d "$DDR_BIN:spl/u-boot-spl.bin" -C bzip2 idbloader.img
 
