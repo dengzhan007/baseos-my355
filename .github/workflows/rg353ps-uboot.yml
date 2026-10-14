@@ -66,3 +66,4 @@ jobs:
             work/rg353ps/kernel/output/kernel-build.json
             work/rg353ps/firmware/firmware-manifest.txt
             work/rg353ps/firmware/SHA256SUMS
+            work/rg353ps/image-build.json
