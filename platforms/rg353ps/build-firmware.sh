@@ -83,7 +83,7 @@ else
   # Pin the known RTL8821CS SDIO/UART config from the ROCKNIX
   # RTL8821CS-firmware package rather than silently shipping no config.
   # Upstream blob MD5: 37338e0b8861a20ce877c0a10cbaaae3
-  printf '%b' '\\125\\253\\043\\207\\027\\000\\014\\000\\020\\002\\200\\222\\004\\120\\305\\352\\031\\341\\033\\375\\257\\137\\001\\244\\013\\344\\000\\001\\010' > "$OUT/rtl_bt/rtl8821cs_config.bin"
+  printf '%b' '\125\253\043\207\027\000\014\000\020\002\200\222\004\120\305\352\031\341\033\375\257\137\001\244\013\344\000\001\010' > "$OUT/rtl_bt/rtl8821cs_config.bin"
 fi
 RTL8821CS_CONFIG_SHA256="$(baseos_sha256 "$OUT/rtl_bt/rtl8821cs_config.bin")"
 [ "$RTL8821CS_CONFIG_SHA256" = "8be5be3b7a4a670ad547bd6a2c572305fbe0da7845f626df5ed474da9062ed9e" ] || {
