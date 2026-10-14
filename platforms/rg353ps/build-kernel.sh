@@ -80,6 +80,9 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
   -e PATCH_SHA="$PATCH_SHA" \
   -e CONFIG_SHA="$CONFIG_SHA" \
   -e ROCKNIX_REF="$ROCKNIX_REF" \
+  -e REGDB_SHA="$REGDB_SHA" \
+  -e REGDB_SIG_SHA="$REGDB_SIG_SHA" \
+  -e REGDB_CERT_SHA="$REGDB_CERT_SHA" \
   debian:bookworm-slim sh -euc '
     export DEBIAN_FRONTEND=noninteractive
     apt-get -qq update
