@@ -109,11 +109,25 @@ EOF
     sgdisk --verify "$IMG"
     echo "Partition layout:"
     sgdisk --print "$IMG"
+    cat > /work/rg353ps/image-build.json <<EOF
+{
+  "target": "Anbernic RG353PS",
+  "image": "baseos-rg353ps-smoke.img.gz",
+  "disk_size": "2 GiB",
+  "bootloader_lba": 64,
+  "boot_partition_start_lba": "$BOOT_START",
+  "root_partition_start_lba": "$ROOT_START",
+  "root_partition_guid": "$ROOT_PARTUUID",
+  "purpose": "first-boot hardware bring-up",
+  "finished_frontend": false,
+  "hardware_tested": false
+}
+EOF
     gzip -1 -c "$IMG" > "$IMG.gz"
-    sha256sum "$IMG" "$IMG.gz" > "$IMG.sha256"
-    echo
+    cd /work/rg353ps
+    sha256sum "$(basename "$IMG")" "$(basename "$IMG.gz")" > "$(basename "$IMG").sha256"
     echo "Created SD-card smoke-test image:"
-    ls -lh "$IMG" "$IMG.gz" "$IMG.sha256"
+    ls -lh "$IMG" "$IMG.gz" "$IMG.sha256" /work/rg353ps/image-build.json
   '
 
 echo "Smoke-test image: $OUTPUT.gz"
