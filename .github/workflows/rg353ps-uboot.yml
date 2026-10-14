@@ -7,16 +7,14 @@ on:
       - "platforms/rg353ps/**"
       - "tools/common.sh"
       - ".github/workflows/rg353ps-uboot.yml"
-  push:
-    branches: [rg353ps-port]
-    paths:
-      - "platforms/rg353ps/**"
-      - "tools/common.sh"
-      - ".github/workflows/rg353ps-uboot.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: rg353ps-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-rg353ps:
