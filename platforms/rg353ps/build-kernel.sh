@@ -159,7 +159,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
       grep -Fqx "CONFIG_CFG80211_EXTRA_REGDB_KEYDIR=\"$SRC/net/wireless/certs/regdb-extra\"" .config || {
         echo "Wens certificate directory was not retained in kernel config" >&2; exit 1;
       }
-      grep -Fqx 'CONFIG_EXTRA_FIRMWARE="regulatory.db regulatory.db.p7s"' .config || {
+      grep -Fqx "CONFIG_EXTRA_FIRMWARE=\\"regulatory.db regulatory.db.p7s\\"" .config || {
         echo "early-boot regulatory database was not embedded" >&2; exit 1;
       }
       grep -Fqx "CONFIG_EXTRA_FIRMWARE_DIR=\"$SRC\"" .config || {
