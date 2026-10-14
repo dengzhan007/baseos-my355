@@ -109,7 +109,7 @@ EOF
     sgdisk --verify "$IMG"
     echo "Partition layout:"
     sgdisk --print "$IMG"
-    cat > /work/rg353ps/image-build.json <<EOF
+    cat > /work/image-build.json <<EOF
 {
   "target": "Anbernic RG353PS",
   "image": "baseos-rg353ps-smoke.img.gz",
@@ -124,10 +124,10 @@ EOF
 }
 EOF
     gzip -1 -c "$IMG" > "$IMG.gz"
-    cd /work/rg353ps
+    cd /work
     sha256sum "$(basename "$IMG")" "$(basename "$IMG.gz")" > "$(basename "$IMG").sha256"
     echo "Created SD-card smoke-test image:"
-    ls -lh "$IMG" "$IMG.gz" "$IMG.sha256" /work/rg353ps/image-build.json
+    ls -lh "$IMG" "$IMG.gz" "$IMG.sha256" /work/image-build.json
   '
 
 echo "Smoke-test image: $OUTPUT.gz"
