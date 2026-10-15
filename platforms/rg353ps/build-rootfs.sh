@@ -86,6 +86,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     chmod 0755 "$R/etc/init.d/rcS"
     chmod 0755 "$R/usr/sbin/rg353ps-v4l2-report"
     chmod 0755 "$R/usr/sbin/rg353ps-jpeg-encode-test"
+    chmod 0755 "$R/usr/sbin/rg353ps-hardware-audit"
     chmod 1777 "$R/tmp"
     mkdir -p "$R/run" "$R/root" "$R/var/empty"
     printf "root:x:0:0:root:/root:/bin/sh\n" > "$R/etc/passwd"
@@ -109,7 +110,7 @@ EOF
     echo "rootfs prepared at $R"
   '
 
-for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
+for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
   [ -e "$file" ] || { echo "rootfs missing required file: $file" >&2; exit 1; }
 done
 
