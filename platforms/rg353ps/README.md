@@ -61,10 +61,28 @@ trusted key. Kernel config/patch and certificate provenance is in
 [kernel/UPSTREAM.md](kernel/UPSTREAM.md).
 
 The result is `work/rg353ps/baseos-rg353ps-smoke.img.gz`, a 2 GiB SD-card
-**bring-up image**. It boots a minimal BusyBox userspace and displays diagnostic
-messages; it does not yet launch a game frontend and does not include BaseOS's
-read-only/A-B update system. It is not considered supported until it is tested
-on real RG353PS hardware.
+**bring-up image**. It boots a minimal BusyBox userspace plus `v4l-utils`, loads
+the Hantro VPU driver during startup, and displays diagnostic messages; it does
+not yet launch a game frontend and does not include BaseOS's read-only/A-B update
+system. It is not considered supported until it is tested on real RG353PS hardware.
+
+After boot, run `/usr/sbin/rg353ps-v4l2-report` to capture driver status,
+V4L2 capabilities, and advertised capture/output formats to
+`/tmp/rg353ps-v4l2-report.txt` while also printing them to the console.
+You can also inspect the nodes directly:
+
+```sh
+v4l2-ctl --list-devices
+v4l2-ctl -d /dev/video0 --all
+v4l2-ctl -d /dev/video0 --list-formats-ext
+v4l2-ctl -d /dev/video0 --list-formats-out-ext
+v4l2-ctl -d /dev/video1 --all
+v4l2-ctl -d /dev/video1 --list-formats-ext
+v4l2-ctl -d /dev/video1 --list-formats-out-ext
+```
+
+This checks device registration and advertised formats; a separate encode/decode
+test with actual media data is still needed to prove successful hardware processing.
 
 ## Porting safety constraints
 
