@@ -8,14 +8,14 @@ colorspace. Set colorimetry explicitly instead of leaving raw formats at
 V4L2_COLORSPACE_DEFAULT, which is reported as "Default" and fails compliance.
 
 ---
- drivers/media/platform/verisilicon/hantro_v4l2.c | 18 ++++++++++++++----
- 1 file changed, 14 insertions(+), 4 deletions(-)
+ drivers/media/platform/verisilicon/hantro_v4l2.c | 20 ++++++++++++++++----
+ 1 file changed, 16 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/media/platform/verisilicon/hantro_v4l2.c b/drivers/media/platform/verisilicon/hantro_v4l2.c
 index fcf3bd9bcda2..1001feee5c07 100644
 --- a/drivers/media/platform/verisilicon/hantro_v4l2.c
 +++ b/drivers/media/platform/verisilicon/hantro_v4l2.c
-@@ -415,10 +415,20 @@ hantro_reset_fmt(struct v4l2_pix_format_mplane *fmt,
+@@ -415,11 +415,23 @@ hantro_reset_fmt(struct v4l2_pix_format_mplane *fmt,
  	memset(fmt, 0, sizeof(*fmt));
  
  	fmt->pixelformat = vpu_fmt->fourcc;
