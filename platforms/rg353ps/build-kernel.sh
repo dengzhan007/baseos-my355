@@ -127,7 +127,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
       python3 - <<PYCODE
 from pathlib import Path
 
-source = Path("drivers/media/platform/verisilicon/hantro_v4l2.c")
+source = Path("$SRC/drivers/media/platform/verisilicon/hantro_v4l2.c")
 text = source.read_text()
 
 raw_defaults_old = """\tfmt->colorspace = V4L2_COLORSPACE_JPEG;
