@@ -36,6 +36,8 @@ jobs:
           sh -n platforms/rg353ps/build-kernel.sh
           sh -n platforms/rg353ps/build-firmware.sh
           sh -n platforms/rg353ps/build-rootfs.sh
+          sh -n platforms/rg353ps/rootfs/etc/init.d/rcS
+          sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-v4l2-report
           sh -n platforms/rg353ps/build-image.sh
 
       - name: Build RG353PS U-Boot
@@ -47,7 +49,7 @@ jobs:
       - name: Build RG353PS Linux kernel, DTB and modules
         run: ./platforms/rg353ps/build-kernel.sh
 
-      - name: Build minimal BusyBox rootfs
+      - name: Build diagnostic rootfs with v4l-utils
         run: ./platforms/rg353ps/build-rootfs.sh
 
       - name: Assemble SD smoke image
