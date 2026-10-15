@@ -43,7 +43,9 @@ index fcf3bd9bcda2..000000000000 100644
  }
  
  static void
-@@ -649,1 +661,11 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
+@@ -647,3 +659,13 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
+ 	hantro_update_requires_request(ctx, pix_mp->pixelformat);
+ 
 +	if (ctx->is_encoder && pix_mp->pixelformat == V4L2_PIX_FMT_JPEG) {
 +		pix_mp->colorspace = V4L2_COLORSPACE_JPEG;
 +		pix_mp->ycbcr_enc = V4L2_YCBCR_ENC_601;
