@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build a minimal, static BusyBox root filesystem for first-boot hardware testing.
+# Build the RG353PS diagnostic rootfs: BusyBox plus V4L2 inspection tools.
 # The Miyoo Flip stock-library harvest and all my355-specific scripts are excluded.
 set -eu
 
@@ -29,7 +29,7 @@ MODULES_TARBALL="$KERNEL_OUT/modules-$KREL.tar.zst"
 baseos_require_aarch64
 mkdir -p "$WORK"
 
-echo "== building RG353PS BusyBox rootfs for kernel $KREL =="
+echo "== building RG353PS diagnostic rootfs for kernel $KREL =="
 docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
   -v "$WORK":/work \
   -v "$HERE/rootfs":/rootfs-src:ro \
@@ -69,7 +69,22 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     cp -a /work/firmware/. "$R/lib/firmware/"
 
     cp -a /rootfs-src/. "$R/"
+
+    # Install v4l-utils and its shared-library dependencies into the target
+    # rootfs. The build container is arm64, matching the RG353PS target.
+    # Disable package scripts: this is a minimal diagnostic rootfs, not a full
+    # Alpine installation, and target post-install hooks must not run at build.
+    mkdir -p "$R/etc/apk/keys"
+    cp -a /etc/apk/keys/. "$R/etc/apk/keys/"
+    cp /etc/apk/repositories "$R/etc/apk/repositories"
+    apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add v4l-utils
+    test -x "$R/usr/bin/v4l2-ctl" || {
+      echo "v4l2-ctl was not installed into target rootfs" >&2
+      exit 1
+    }
+
     chmod 0755 "$R/etc/init.d/rcS"
+    chmod 0755 "$R/usr/sbin/rg353ps-v4l2-report"
     chmod 1777 "$R/tmp"
     mkdir -p "$R/run" "$R/root" "$R/var/empty"
     printf "root:x:0:0:root:/root:/bin/sh\n" > "$R/etc/passwd"
