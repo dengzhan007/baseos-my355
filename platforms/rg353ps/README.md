@@ -102,8 +102,14 @@ a read-only inventory of display/backlight, input devices, audio, battery and
 thermal sensors, storage, network, Bluetooth/USB, V4L2 formats/compliance, and
 relevant kernel messages. It writes its report under `/mnt/boot` when writable,
 otherwise under `/tmp`. It does not deliberately press buttons, play audio,
-toggle radios, change power state or reboot; these interactive checks are
-separate and should be performed one at a time after reviewing the report.
+toggle radios, change power state or reboot.
+
+The updated diagnostic image also includes `evtest`, `alsa-utils` and `iw`.
+After reviewing the inventory, test controls interactively with
+`evtest /dev/input/eventX` (replace `eventX` with the device name from the
+report and press each physical button), inspect audio with `aplay -l` and
+`amixer scontrols`, and check wireless interfaces with `iw dev`. Do not start
+wireless associations or change mixer values as part of the passive inventory.
 
 ## Porting safety constraints
 
