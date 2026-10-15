@@ -1,0 +1,132 @@
+#!/bin/sh
+# Exercise the RG353PS Hantro JPEG encoder with one synthetic YM12 frame.
+# Logs and the resulting JPEG are written to /mnt/boot when that partition is
+# mounted and writable; otherwise they are written to /tmp.
+set -u
+
+DEV="${VIDEO_DEVICE:-/dev/video1}"
+OUTDIR="${1:-}"
+STAMP="$(date -u +%Y%m%d-%H%M%S 2>/dev/null || echo unknown)"
+
+if [ -z "$OUTDIR" ]; then
+  if grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null && [ -w /mnt/boot ]; then
+    OUTDIR=/mnt/boot
+  else
+    OUTDIR=/tmp
+  fi
+fi
+
+mkdir -p "$OUTDIR" 2>/dev/null || OUTDIR=/tmp
+REPORT="$OUTDIR/rg353ps-jpeg-encode-$STAMP.txt"
+JPEG="$OUTDIR/rg353ps-test-$STAMP.jpg"
+RAW="/tmp/rg353ps-test-$STAMP.ym12"
+
+if ! : > "$REPORT" 2>/dev/null; then
+  OUTDIR=/tmp
+  REPORT="$OUTDIR/rg353ps-jpeg-encode-$STAMP.txt"
+  JPEG="$OUTDIR/rg353ps-test-$STAMP.jpg"
+  : > "$REPORT" || exit 1
+fi
+
+exec 3>&1 4>&2
+exec > "$REPORT" 2>&1
+
+status=0
+
+echo "===== RG353PS Hantro JPEG encode test ====="
+date -u 2>/dev/null || :
+uname -a
+echo "Device: $DEV"
+echo "Report: $REPORT"
+echo "JPEG output: $JPEG"
+echo
+
+if [ ! -c "$DEV" ]; then
+  echo "FAIL: encoder device $DEV does not exist"
+  status=1
+else
+  echo "===== Initial formats ====="
+  v4l2-ctl -d "$DEV" --get-fmt-video-out 2>&1 || :
+  v4l2-ctl -d "$DEV" --get-fmt-video 2>&1 || :
+  echo
+
+  # YM12 is planar 4:2:0 with 3 planes: 3072 + 768 + 768 bytes at 96x32.
+  # Zero-filled input is sufficient to exercise the hardware encode pipeline.
+  if ! dd if=/dev/zero of="$RAW" bs=4608 count=1 2>/dev/null; then
+    echo "FAIL: could not prepare a 4608-byte YM12 test frame"
+    status=1
+  fi
+
+  if [ "$status" -eq 0 ]; then
+    input_size="$(wc -c < "$RAW" | tr -d ' \n')"
+    echo "Input frame bytes: $input_size"
+    if [ "$input_size" != 4608 ]; then
+      echo "FAIL: unexpected YM12 input size"
+      status=1
+    fi
+  fi
+
+  if [ "$status" -eq 0 ]; then
+    echo
+    echo "===== Configure and encode one frame ====="
+    if v4l2-ctl -d "$DEV" \
+      --set-fmt-video=width=96,height=32,pixelformat=JPEG \
+      --set-fmt-video-out=width=96,height=32,pixelformat=YM12 \
+      --stream-from="$RAW" \
+      --stream-to="$JPEG" \
+      --stream-mmap=3 \
+      --stream-out-mmap=3 \
+      --stream-count=1; then
+      echo "v4l2-ctl streaming command: PASS"
+    else
+      echo "v4l2-ctl streaming command: FAIL"
+      status=1
+    fi
+  fi
+
+  if [ "$status" -eq 0 ]; then
+    echo
+    echo "===== Validate JPEG bitstream ====="
+    if [ ! -s "$JPEG" ]; then
+      echo "FAIL: JPEG output file is empty or missing"
+      status=1
+    else
+      output_size="$(wc -c < "$JPEG" | tr -d ' \n')"
+      first_bytes="$(od -An -tx1 -N2 "$JPEG" 2>/dev/null | tr -d ' \n')"
+      last_bytes="$(tail -c 2 "$JPEG" | od -An -tx1 2>/dev/null | tr -d ' \n')"
+      echo "JPEG bytes: $output_size"
+      echo "JPEG start marker: $first_bytes (expected ffd8)"
+      echo "JPEG end marker: $last_bytes (expected ffd9)"
+      if [ "$output_size" -gt 100 ] && [ "$first_bytes" = ffd8 ] && [ "$last_bytes" = ffd9 ]; then
+        echo "JPEG bitstream marker check: PASS"
+      else
+        echo "JPEG bitstream marker check: FAIL"
+        status=1
+      fi
+    fi
+  fi
+
+  echo
+  echo "===== Formats after the test ====="
+  v4l2-ctl -d "$DEV" --get-fmt-video-out 2>&1 || :
+  v4l2-ctl -d "$DEV" --get-fmt-video 2>&1 || :
+fi
+
+rm -f "$RAW"
+echo
+echo "===== Relevant kernel log tail ====="
+dmesg 2>&1 | grep -iE 'hantro|video-codec|iommu|fault|timeout|v4l2' | tail -n 100 || :
+echo
+if [ "$status" -eq 0 ]; then
+  echo "RESULT: PASS"
+else
+  echo "RESULT: FAIL (exit status $status)"
+fi
+echo "Report saved to: $REPORT"
+if [ -f "$JPEG" ]; then
+  ls -lh "$JPEG" 2>&1 || :
+fi
+
+exec 1>&3 2>&4
+cat "$REPORT"
+exit "$status"
