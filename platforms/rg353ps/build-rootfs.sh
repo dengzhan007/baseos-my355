@@ -85,6 +85,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
 
     chmod 0755 "$R/etc/init.d/rcS"
     chmod 0755 "$R/usr/sbin/rg353ps-v4l2-report"
+    chmod 0755 "$R/usr/sbin/rg353ps-jpeg-encode-test"
     chmod 1777 "$R/tmp"
     mkdir -p "$R/run" "$R/root" "$R/var/empty"
     printf "root:x:0:0:root:/root:/bin/sh\n" > "$R/etc/passwd"
