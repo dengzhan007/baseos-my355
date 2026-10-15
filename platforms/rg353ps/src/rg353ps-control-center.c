@@ -342,6 +342,7 @@ static void navigate_menu(int delta)
 static void launch_shell(void)
 {
     pid_t child;
+    pid_t frontend_pgrp = getpgrp();
     int status = 0;
     int wait_ok = 1;
 
@@ -399,6 +400,27 @@ static void launch_shell(void)
         } else {
             (void)snprintf(last_event, sizeof(last_event),
                            "Returned from command-line shell");
+        }
+    }
+
+    /*
+     * An interactive shell may put itself in a separate foreground process
+     * group for job control. Reclaim the tty before the frontend resumes
+     * reading input; ignore SIGTTOU while changing the foreground pgrp from
+     * the frontend's now-background process group.
+     */
+    if (isatty(STDIN_FILENO)) {
+        pid_t foreground_pgrp = tcgetpgrp(STDIN_FILENO);
+        if (foreground_pgrp >= 0 && foreground_pgrp != frontend_pgrp) {
+            struct sigaction ignore_action;
+            struct sigaction old_action;
+            memset(&ignore_action, 0, sizeof(ignore_action));
+            ignore_action.sa_handler = SIG_IGN;
+            (void)sigemptyset(&ignore_action.sa_mask);
+            if (sigaction(SIGTTOU, &ignore_action, &old_action) == 0) {
+                (void)tcsetpgrp(STDIN_FILENO, frontend_pgrp);
+                (void)sigaction(SIGTTOU, &old_action, NULL);
+            }
         }
     }
 
