@@ -14,6 +14,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -21,7 +23,7 @@
 #define PATH_LEN 256
 #define NAME_LEN 128
 
-enum input_role { ROLE_OTHER = 0, ROLE_GAME, ROLE_FUNCTION, ROLE_STICK, ROLE_VOLUME };
+enum input_role { ROLE_OTHER = 0, ROLE_GAME, ROLE_FUNCTION, ROLE_STICK, ROLE_VOLUME, ROLE_POWER };
 enum screen_id { SCREEN_HOME = 0, SCREEN_CONTROLS, SCREEN_AUDIO, SCREEN_WIFI, SCREEN_SYSTEM, SCREEN_HELP };
 
 struct input_device {
@@ -66,6 +68,7 @@ static enum input_role role_for_name(const char *name)
     if (strstr(name, "adc-keys") != NULL) return ROLE_FUNCTION;
     if (strstr(name, "adc-joystick") != NULL) return ROLE_STICK;
     if (strstr(name, "gpio-keys-vol") != NULL) return ROLE_VOLUME;
+    if (strcmp(name, "rk805 pwrkey") == 0) return ROLE_POWER;
     return ROLE_OTHER;
 }
 
@@ -107,10 +110,11 @@ static const char *key_name(unsigned int code)
     case BTN_DPAD_DOWN: return "DPAD DOWN";
     case BTN_DPAD_LEFT: return "DPAD LEFT";
     case BTN_DPAD_RIGHT: return "DPAD RIGHT";
-    case BTN_SOUTH: return "BTN_SOUTH";
-    case BTN_EAST: return "BTN_EAST";
-    case BTN_WEST: return "BTN_WEST";
-    case BTN_NORTH: return "BTN_NORTH";
+    case BTN_SOUTH: return "B (bottom / BTN_SOUTH)";
+    case BTN_EAST: return "A (right / BTN_EAST)";
+    case BTN_WEST: return "Y (left / BTN_WEST)";
+    case BTN_NORTH: return "X (top / BTN_NORTH)";
+    case KEY_POWER: return "POWER";
     case BTN_TL: return "L1 / TL";
     case BTN_TR: return "R1 / TR";
     case BTN_TL2: return "L2 / TL2";
@@ -190,8 +194,8 @@ static void render_home(void)
     (void)read_value("/sys/class/power_supply/battery/capacity", battery, sizeof(battery));
 
     printf("\n  This is a controller-responsive diagnostic menu, not the final game UI.\n\n");
-    printf("  D-pad UP/DOWN or left stick selects; press BTN_SOUTH to open.\n");
-    printf("  BTN_EAST returns. FUNCTION toggles the live controller monitor.\n\n");
+    printf("  D-pad UP/DOWN or left stick selects; A (right / BTN_EAST) opens.\n");
+    printf("  B (bottom / BTN_SOUTH) returns. FUNCTION toggles the live input monitor.\n\n");
     printf("  \033[1;33mMENU\033[0m\n");
     for (int i = 0; i < MENU_COUNT; ++i) {
         if (i == selected_item) printf("  \033[1;32m > %-70.70s\033[0m\n", menu_items[i]);
@@ -200,6 +204,9 @@ static void render_home(void)
     printf("\n  Input devices: %d     Button events: %d     Function presses: %d\n",
            input_count, key_count, function_count);
     printf("  Wi-Fi: %-12.12s     Battery: %-5.5s%%\n", operstate, battery);
+    printf("  Last input: %-68.68s\n", last_event);
+    printf("  Volume +/- keys adjust RK817 playback level.\n");
+    printf("  Short Power press shows system information.\n");
     printf("\n  Serial console remains available on ttyS2 for shell/debug access.\n");
 }
 
@@ -212,7 +219,8 @@ static void render_controls(void)
     printf("    Analog sticks : adc-joystick\n");
     printf("\n  BUTTONS (raw Linux input event names)\n");
     printf("    D-pad: BTN_DPAD_UP / DOWN / LEFT / RIGHT\n");
-    printf("    Face:  BTN_SOUTH / EAST / WEST / NORTH\n");
+    printf("    Nintendo layout: A=right (BTN_EAST), B=bottom (BTN_SOUTH)\n");
+    printf("    X=top (BTN_NORTH), Y=left (BTN_WEST)\n");
     printf("    Extra: BTN_TL / TR / TL2 / TR2 / THUMBL / THUMBR / START / SELECT\n");
     printf("    Function: %s\n", function_count > 0 ? "detected" : "press Function to test");
     printf("\n  ANALOG AXES (expected idle around 511; observed range 15..1023)\n");
@@ -221,7 +229,7 @@ static void render_controls(void)
     printf("    \033[1;33m%-72.72s\033[0m\n", last_event);
     printf("\n  Counters: game key-downs=%d   function key-downs=%d   all input events=%d\n",
            key_count, function_count, event_count);
-    printf("\n  BTN_EAST returns to menu. FUNCTION toggles back.\n");
+    printf("\n  B (bottom / BTN_SOUTH) returns. FUNCTION toggles the monitor.\n");
 }
 
 static void render_audio(void)
@@ -235,7 +243,7 @@ static void render_audio(void)
     print_file("/proc/asound/pcm", 6, &row);
     printf("\n  Serial shell: aplay -l  |  amixer scontrols\n");
     printf("  This menu does not change mixer levels or play sound automatically.\n");
-    printf("\n  BTN_EAST returns to menu.\n");
+    printf("\n  B (bottom / BTN_SOUTH) returns to menu.\n");
 }
 
 static void render_wifi(void)
@@ -253,7 +261,7 @@ static void render_wifi(void)
     print_file("/proc/net/wireless", 5, &row);
     printf("\n  No access point association is started by this screen.\n");
     printf("  Serial shell: iw dev\n");
-    printf("\n  BTN_EAST returns to menu.\n");
+    printf("\n  B (bottom / BTN_SOUTH) returns to menu.\n");
 }
 
 static void render_system(void)
@@ -273,7 +281,7 @@ static void render_system(void)
     printf("  CPU temperature: %s millidegrees C\n", value);
     printf("\n  Memory summary:\n");
     print_file("/proc/meminfo", 4, &row);
-    printf("\n  BTN_EAST returns to menu.\n");
+    printf("\n  B (bottom / BTN_SOUTH) returns to menu.\n");
 }
 
 static void render_help(void)
@@ -281,12 +289,14 @@ static void render_help(void)
     render_header("Control mapping help");
     printf("\n  D-pad UP/DOWN     Move menu selection\n");
     printf("  Left stick UP/DOWN also moves selection when crossing the dead zone\n");
-    printf("  BTN_SOUTH         Select/open an item\n");
-    printf("  BTN_EAST          Back to the main menu\n");
+    printf("  A on the right (BTN_EAST)  Select/open an item\n");
+    printf("  B at the bottom (BTN_SOUTH) Back to the main menu\n");
+    printf("  Volume +/-        Adjust RK817 playback volume\n");
+    printf("  Power button      Short press opens system information\n");
     printf("  FUNCTION          Toggle the live controller monitor\n");
     printf("\n  This step verifies physical-to-kernel input mapping and screen response.\n");
     printf("  Emulation hotkeys, ROM browsing and game launching are not implemented.\n");
-    printf("\n  BTN_EAST returns to menu.\n");
+    printf("\n  B (bottom / BTN_SOUTH) returns to menu.\n");
 }
 
 static void render(void)
@@ -332,22 +342,50 @@ static void go_back(void)
     }
 }
 
+static int adjust_volume(int volume_up)
+{
+    pid_t child = fork();
+    int status;
+    if (child < 0)
+        return 0;
+    if (child == 0) {
+        int nullfd = open("/dev/null", O_WRONLY);
+        if (nullfd >= 0) {
+            (void)dup2(nullfd, STDOUT_FILENO);
+            (void)dup2(nullfd, STDERR_FILENO);
+            if (nullfd > STDERR_FILENO)
+                (void)close(nullfd);
+        }
+        execl("/usr/bin/amixer", "amixer", "-c", "1", "set",
+              "Master Playback Volume", volume_up ? "5%+" : "5%-", (char *)NULL);
+        execl("/usr/sbin/amixer", "amixer", "-c", "1", "set",
+              "Master Playback Volume", volume_up ? "5%+" : "5%-", (char *)NULL);
+        _exit(127);
+    }
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno == EINTR) continue;
+        return 0;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 static void handle_key_event(struct input_device *dev, const struct input_event *ev)
 {
     const char *name = key_name(ev->code);
     char detail[100];
     if (ev->value == 1) {
         ++event_count;
-        if (dev->role == ROLE_GAME) ++key_count;
+        if (dev->role == ROLE_GAME)
+            ++key_count;
     }
-
-    if (name == NULL) (void)snprintf(detail, sizeof(detail), "KEY code %u", ev->code);
-    else (void)snprintf(detail, sizeof(detail), "%s", name);
+    if (name == NULL)
+        (void)snprintf(detail, sizeof(detail), "KEY code %u", ev->code);
+    else
+        (void)snprintf(detail, sizeof(detail), "%s", name);
 
     if (dev->role == ROLE_FUNCTION) {
         if (ev->value == 1) {
             ++function_count;
-            ++event_count;
             (void)snprintf(last_event, sizeof(last_event), "FUNCTION pressed (%s, code %u)", detail, ev->code);
             current_screen = current_screen == SCREEN_CONTROLS ? SCREEN_HOME : SCREEN_CONTROLS;
             render();
@@ -357,11 +395,34 @@ static void handle_key_event(struct input_device *dev, const struct input_event 
         }
         return;
     }
-    if (dev->role != ROLE_GAME) return;
+    if (dev->role == ROLE_VOLUME) {
+        if ((ev->value == 1 || ev->value == 2) &&
+            (ev->code == KEY_VOLUMEUP || ev->code == KEY_VOLUMEDOWN)) {
+            int up = ev->code == KEY_VOLUMEUP;
+            int success = adjust_volume(up);
+            (void)snprintf(last_event, sizeof(last_event), "Volume %s: %s",
+                           up ? "UP" : "DOWN",
+                           success ? "RK817 master playback volume changed by 5%"
+                                   : "key detected; mixer adjustment failed");
+            render();
+        }
+        return;
+    }
+    if (dev->role == ROLE_POWER && ev->code == KEY_POWER) {
+        if (ev->value == 1) {
+            (void)snprintf(last_event, sizeof(last_event), "POWER key pressed");
+            current_screen = SCREEN_SYSTEM;
+        } else if (ev->value == 0) {
+            (void)snprintf(last_event, sizeof(last_event), "POWER key released");
+        }
+        if (ev->value == 0 || ev->value == 1) render();
+        return;
+    }
+    if (dev->role != ROLE_GAME)
+        return;
 
     (void)snprintf(last_event, sizeof(last_event), "%s %s", detail,
                    ev->value == 0 ? "released" : ev->value == 2 ? "repeating" : "pressed");
-
     if (ev->value == 1) {
         switch (ev->code) {
         case BTN_DPAD_UP:
@@ -370,13 +431,14 @@ static void handle_key_event(struct input_device *dev, const struct input_event 
         case BTN_DPAD_DOWN:
             if (current_screen == SCREEN_HOME) { navigate_menu(1); return; }
             break;
-        case BTN_SOUTH:
+        case BTN_EAST: /* Nintendo A, physically at the right. */
             if (current_screen == SCREEN_HOME) { select_menu_item(); return; }
             break;
-        case BTN_EAST:
+        case BTN_SOUTH: /* Nintendo B, physically at the bottom. */
             if (current_screen != SCREEN_HOME) { go_back(); return; }
             break;
-        default: break;
+        default:
+            break;
         }
     }
     render();
@@ -384,8 +446,8 @@ static void handle_key_event(struct input_device *dev, const struct input_event 
 
 static int joy_direction(int value)
 {
-    if (value < 270) return -1;
-    if (value > 750) return 1;
+    if (value < 270) return 1;
+    if (value > 750) return -1;
     return 0;
 }
 
