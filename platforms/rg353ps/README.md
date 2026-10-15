@@ -15,9 +15,10 @@ latest successful build before the current JPEG test-helper addition is
 The image has been booted on physical RG353PS hardware. The submitted hardware
 report shows `/dev/video0` (Hantro stateless decoder) and `/dev/video1`
 (Hantro JPEG encoder) both pass `v4l2-compliance 1.28.1` with 48/48 tests,
-96/96 combined. The remaining hardware check is to exercise a real encode
-operation, followed by checks for the other peripherals and boot/shutdown
-behavior.
+96/96 combined. A one-frame YM12-to-JPEG encode also succeeded on the device:
+`v4l2-ctl` produced a 678-byte bitstream with JPEG SOI/EOI markers. Remaining
+hardware work is the wider display, controls, audio, battery, networking,
+wireless, storage, suspend and shutdown validation.
 
 **This is still a bring-up image, not the finished BaseOS port.** It launches
 a diagnostic BusyBox userspace rather than a game frontend and does not yet
@@ -90,18 +91,19 @@ v4l2-ctl -d /dev/video1 --list-formats-ext
 v4l2-ctl -d /dev/video1 --list-formats-out-ext
 ```
 
-The V4L2 API compliance test has passed on hardware. The next step is to
-verify actual encoder operation. In a newly built smoke image, run:
+The V4L2 API compliance and one-frame hardware JPEG encode tests have passed.
+The encode helper is `/usr/sbin/rg353ps-jpeg-encode-test`; it feeds one 96x32
+YM12 frame to `/dev/video1`, captures the JPEG output, and checks the start/end
+markers. A pass confirms a plausible bitstream was produced, but does not
+replace decoding/viewing the image or longer-duration testing.
 
-```sh
-/usr/sbin/rg353ps-jpeg-encode-test
-```
-
-This feeds one 96x32 YM12 frame to `/dev/video1`, captures the JPEG output, and
-checks the JPEG start/end markers. If `/mnt/boot` is mounted and writable, the
-script saves both its text report and output JPEG there; otherwise it uses
-`/tmp`. A pass confirms the hardware path produced a plausible JPEG bitstream,
-but does not replace decoding/viewing that image or longer-duration testing.
+For the next hardware pass, run `/usr/sbin/rg353ps-hardware-audit`. It creates
+a read-only inventory of display/backlight, input devices, audio, battery and
+thermal sensors, storage, network, Bluetooth/USB, V4L2 formats/compliance, and
+relevant kernel messages. It writes its report under `/mnt/boot` when writable,
+otherwise under `/tmp`. It does not deliberately press buttons, play audio,
+toggle radios, change power state or reboot; these interactive checks are
+separate and should be performed one at a time after reviewing the report.
 
 ## Porting safety constraints
 
