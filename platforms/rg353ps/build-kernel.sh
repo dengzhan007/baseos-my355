@@ -120,6 +120,35 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
         patch -s -p1 -d "$SRC" --batch --forward < "$patch_file"
       done
 
+      # Apply the RG353PS Hantro JPEG colorimetry workaround directly to the
+      # pinned kernel source. Keep this as an exact, checked source edit rather
+      # than a hand-maintained unified-diff hunk, so CI fails with a clear
+      # message if the upstream context ever changes.
+      python3 - <<'PY'
+from pathlib import Path
+
+source = Path("drivers/media/platform/verisilicon/hantro_v4l2.c")
+text = source.read_text()
+needle = '\tvpu_debug(0, "CAPTURE codec mode: %d\\n", ctx->vpu_dst_fmt->codec_mode);'
+replacement = """\tif (ctx->is_encoder && pix_mp->pixelformat == V4L2_PIX_FMT_JPEG) {
+\t\tpix_mp->colorspace = V4L2_COLORSPACE_JPEG;
+\t\tpix_mp->ycbcr_enc = V4L2_YCBCR_ENC_601;
+\t\tpix_mp->quantization = V4L2_QUANTIZATION_FULL_RANGE;
+\t\tpix_mp->xfer_func = V4L2_XFER_FUNC_SRGB;
+\t\tctx->dst_fmt.colorspace = pix_mp->colorspace;
+\t\tctx->dst_fmt.ycbcr_enc = pix_mp->ycbcr_enc;
+\t\tctx->dst_fmt.quantization = pix_mp->quantization;
+\t\tctx->dst_fmt.xfer_func = pix_mp->xfer_func;
+\t}
+
+""" + needle
+count = text.count(needle)
+if count != 1:
+    raise SystemExit(f"Expected exactly one Hantro CAPTURE debug anchor, found {count}")
+source.write_text(text.replace(needle, replacement, 1))
+print("Applied checked Hantro JPEG CAPTURE colorimetry fix")
+PY
+
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
