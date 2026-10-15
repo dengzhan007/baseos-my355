@@ -8,8 +8,8 @@ encoded format setup resets the raw queue and propagates colorimetry, so
 re-apply the JPEG queue values after that propagation.
 
 ---
- drivers/media/platform/verisilicon/hantro_v4l2.c | 31 +++++++++++++++++++++++++++----
- 1 file changed, 27 insertions(+), 4 deletions(-)
+ drivers/media/platform/verisilicon/hantro_v4l2.c | 30 ++++++++++++++++++++++++++----
+ 1 file changed, 26 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/media/platform/verisilicon/hantro_v4l2.c b/drivers/media/platform/verisilicon/hantro_v4l2.c
 index fcf3bd9bcda2..000000000000 100644
@@ -43,7 +43,7 @@ index fcf3bd9bcda2..000000000000 100644
  }
  
  static void
-@@ -649,1 +661,12 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
+@@ -648,2 +660,12 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
 +	if (ctx->is_encoder && pix_mp->pixelformat == V4L2_PIX_FMT_JPEG) {
 +		pix_mp->colorspace = V4L2_COLORSPACE_JPEG;
 +		pix_mp->ycbcr_enc = V4L2_YCBCR_ENC_601;
