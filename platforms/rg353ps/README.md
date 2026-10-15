@@ -6,16 +6,25 @@ build so the current `my355` release path remains unchanged.
 
 ## Current status
 
-The first milestone is the **U-Boot build target only**. The script builds
-the Anbernic RGxx3 mainline bootloader and places its components in the
-Rockchip SD-card boot layout used by ROCKNIX.
+The branch now builds an end-to-end **2 GiB experimental SD smoke image**:
+mainline U-Boot, Linux kernel and RG353PS DTB, modules, RTL8821CS firmware,
+a minimal BusyBox root filesystem, and a GPT-partitioned disk image. The
+latest successful build before the current JPEG test-helper addition is
+[workflow run #62](https://github.com/dengzhan007/baseos-my355/actions/runs/38702742778).
 
-**This is not a complete BaseOS image and is not ready to flash as a card image.**
-It does not yet build or package the RG353PS Linux kernel, Linux device tree,
-root filesystem, GPT/partition layout, frontend, or updater. The output
-`work/rg353ps/rg353ps-uboot.bin` is an intermediate bootloader region, not a
-standalone SD-card image. Do not write it to a card as though it were a full
-image.
+The image has been booted on physical RG353PS hardware. The submitted hardware
+report shows `/dev/video0` (Hantro stateless decoder) and `/dev/video1`
+(Hantro JPEG encoder) both pass `v4l2-compliance 1.28.1` with 48/48 tests,
+96/96 combined. The remaining hardware check is to exercise a real encode
+operation, followed by checks for the other peripherals and boot/shutdown
+behavior.
+
+**This is still a bring-up image, not the finished BaseOS port.** It launches
+a diagnostic BusyBox userspace rather than a game frontend and does not yet
+include BaseOS's read-only root design, A/B updater, release packaging, or
+finished user-facing service integration. Treat it as experimental and use a
+spare TF card. The file `work/rg353ps/rg353ps-uboot.bin` remains an
+intermediate bootloader region, not a standalone SD-card image.
 
 ## Build the U-Boot milestone
 
@@ -81,8 +90,18 @@ v4l2-ctl -d /dev/video1 --list-formats-ext
 v4l2-ctl -d /dev/video1 --list-formats-out-ext
 ```
 
-This checks device registration and advertised formats; a separate encode/decode
-test with actual media data is still needed to prove successful hardware processing.
+The V4L2 API compliance test has passed on hardware. The next step is to
+verify actual encoder operation. In a newly built smoke image, run:
+
+```sh
+/usr/sbin/rg353ps-jpeg-encode-test
+```
+
+This feeds one 96x32 YM12 frame to `/dev/video1`, captures the JPEG output, and
+checks the JPEG start/end markers. If `/mnt/boot` is mounted and writable, the
+script saves both its text report and output JPEG there; otherwise it uses
+`/tmp`. A pass confirms the hardware path produced a plausible JPEG bitstream,
+but does not replace decoding/viewing that image or longer-duration testing.
 
 ## Porting safety constraints
 
