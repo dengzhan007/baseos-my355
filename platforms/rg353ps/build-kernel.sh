@@ -161,6 +161,35 @@ else:
         f"original={old_count}, patched={new_count}"
     )
 
+out_old = """\t/* Colorimetry information are always propagated. */
+\tctx->dst_fmt.colorspace = pix_mp->colorspace;
+\tctx->dst_fmt.ycbcr_enc = pix_mp->ycbcr_enc;
+\tctx->dst_fmt.xfer_func = pix_mp->xfer_func;
+\tctx->dst_fmt.quantization = pix_mp->quantization;"""
+out_new = """\tif (ctx->is_encoder && ctx->dst_fmt.pixelformat == V4L2_PIX_FMT_JPEG) {
+\t\tctx->dst_fmt.colorspace = V4L2_COLORSPACE_JPEG;
+\t\tctx->dst_fmt.ycbcr_enc = V4L2_YCBCR_ENC_601;
+\t\tctx->dst_fmt.quantization = V4L2_QUANTIZATION_FULL_RANGE;
+\t\tctx->dst_fmt.xfer_func = V4L2_XFER_FUNC_SRGB;
+\t} else {
+\t\t/* Colorimetry information are always propagated. */
+\t\tctx->dst_fmt.colorspace = pix_mp->colorspace;
+\t\tctx->dst_fmt.ycbcr_enc = pix_mp->ycbcr_enc;
+\t\tctx->dst_fmt.xfer_func = pix_mp->xfer_func;
+\t\tctx->dst_fmt.quantization = pix_mp->quantization;
+\t}"""
+out_old_count = text.count(out_old)
+out_new_count = text.count(out_new)
+if out_old_count == 1:
+    text = text.replace(out_old, out_new, 1)
+elif out_new_count == 1:
+    pass
+else:
+    raise SystemExit(
+        "Could not uniquely locate Hantro output colorimetry propagation: "
+        f"original={out_old_count}, patched={out_new_count}"
+    )
+
 needle = """\tvpu_debug(0, "CAPTURE codec mode: %d\\\\n", ctx->vpu_dst_fmt->codec_mode);"""
 replacement = """\tif (ctx->is_encoder && pix_mp->pixelformat == V4L2_PIX_FMT_JPEG) {
 \t\tpix_mp->colorspace = V4L2_COLORSPACE_JPEG;
