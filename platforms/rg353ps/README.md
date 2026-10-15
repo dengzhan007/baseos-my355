@@ -21,9 +21,11 @@ hardware work is the wider display, controls, audio, battery, networking,
 wireless, storage, suspend and shutdown validation.
 
 **This is still a bring-up image, not the finished BaseOS port.** It launches
-a diagnostic BusyBox userspace rather than a game frontend and does not yet
-include BaseOS's read-only root design, A/B updater, release packaging, or
-finished user-facing service integration. Treat it as experimental and use a
+a minimal evdev-driven text diagnostic menu on the handheld display rather than
+a game frontend. The D-pad and left stick move the selection, BTN_SOUTH opens
+an item, BTN_EAST returns, and Function toggles the live input monitor. It does
+not yet include BaseOS's read-only root design, A/B updater, release packaging,
+or finished user-facing service integration. Treat it as experimental and use a
 spare TF card. The file `work/rg353ps/rg353ps-uboot.bin` remains an
 intermediate bootloader region, not a standalone SD-card image.
 
@@ -71,10 +73,10 @@ trusted key. Kernel config/patch and certificate provenance is in
 [kernel/UPSTREAM.md](kernel/UPSTREAM.md).
 
 The result is `work/rg353ps/baseos-rg353ps-smoke.img.gz`, a 2 GiB SD-card
-**bring-up image**. It boots a minimal BusyBox userspace plus `v4l-utils`, loads
-the Hantro VPU driver during startup, and displays diagnostic messages; it does
-not yet launch a game frontend and does not include BaseOS's read-only/A-B update
-system. It is not considered supported until it is tested on real RG353PS hardware.
+**bring-up image**. It boots a minimal BusyBox userspace plus hardware diagnostic
+tools and an evdev-driven text UI on tty1. The UI verifies controller-to-screen
+response and offers audio, Wi-Fi and system status pages; it is not the finished
+game frontend and does not include BaseOS's read-only/A-B update system. It is not considered supported until it is tested on real RG353PS hardware.
 
 After boot, run `/usr/sbin/rg353ps-v4l2-report` to capture driver status,
 V4L2 capabilities, and advertised capture/output formats to
@@ -104,7 +106,7 @@ relevant kernel messages. It writes its report under `/mnt/boot` when writable,
 otherwise under `/tmp`. It does not deliberately press buttons, play audio,
 toggle radios, change power state or reboot.
 
-The updated diagnostic image also includes `evtest`, `alsa-utils` and `iw`.
+The diagnostic image includes `evtest`, `alsa-utils` and `iw`. The interactive control UI is compiled as a static ARM64 executable during the rootfs build.
 After reviewing the inventory, test controls interactively with
 `evtest /dev/input/eventX` (replace `eventX` with the device name from the
 report and press each physical button), inspect audio with `aplay -l` and
