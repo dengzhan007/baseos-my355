@@ -22,10 +22,13 @@ wireless, storage, suspend and shutdown validation.
 
 **This is still a bring-up image, not the finished BaseOS port.** It launches
 a minimal evdev-driven text diagnostic menu on the handheld display rather than
-a game frontend. The D-pad and left stick move the selection, BTN_SOUTH opens
-an item, BTN_EAST returns, and Function toggles the live input monitor. It does
-not yet include BaseOS's read-only root design, A/B updater, release packaging,
-or finished user-facing service integration. Treat it as experimental and use a
+a game frontend. The D-pad and vertically corrected left stick move the menu;
+Nintendo A (right / BTN_EAST) confirms and B (bottom / BTN_SOUTH) returns.
+Volume +/- adjusts RK817 Master Playback Volume by 5%. A short power-button
+press opens system status; holding Power for 2 seconds requests a clean
+shutdown. Function toggles the live input monitor. It does not yet include
+BaseOS's read-only root design, A/B updater, release packaging, or finished
+user-facing service integration. Treat it as experimental and use a
 spare TF card. The file `work/rg353ps/rg353ps-uboot.bin` remains an
 intermediate bootloader region, not a standalone SD-card image.
 
