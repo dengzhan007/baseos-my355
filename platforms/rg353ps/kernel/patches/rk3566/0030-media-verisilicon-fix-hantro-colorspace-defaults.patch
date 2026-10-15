@@ -43,7 +43,7 @@ index fcf3bd9bcda2..000000000000 100644
  }
  
  static void
-@@ -637,5 +649,16 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
+@@ -637,6 +649,17 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
  	/* Colorimetry information are always propagated. */
  	ctx->src_fmt.colorspace = pix_mp->colorspace;
  	ctx->src_fmt.ycbcr_enc = pix_mp->ycbcr_enc;
