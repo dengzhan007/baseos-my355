@@ -51,7 +51,7 @@ jobs:
       - name: Build RG353PS Linux kernel, DTB and modules
         run: ./platforms/rg353ps/build-kernel.sh
 
-      - name: Build diagnostic rootfs with v4l-utils
+      - name: Build diagnostic rootfs and evdev UI
         run: ./platforms/rg353ps/build-rootfs.sh
 
       - name: Assemble SD smoke image
