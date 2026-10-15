@@ -32,6 +32,11 @@ if [ -x /sbin/modprobe ]; then
   /sbin/modprobe rtw88_8821cs 2>/dev/null || :
   /sbin/modprobe hci_uart 2>/dev/null || :
   /sbin/modprobe btrtl 2>/dev/null || :
+  if /sbin/modprobe hantro-vpu 2>/dev/null; then
+    say "Hantro VPU driver loaded (decoder/encoder nodes should be available)"
+  else
+    say "WARNING: failed to load Hantro VPU driver"
+  fi
 fi
 
 say "BaseOS userspace is up."
