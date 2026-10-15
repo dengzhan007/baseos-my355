@@ -1,7 +1,7 @@
 # BusyBox init table for the RG353PS bring-up image.
-# Temporary diagnostic consoles for first-boot hardware testing.
+# Serial shell for debugging; the framebuffer console runs the input-responsive test UI.
 ::sysinit:/etc/init.d/rcS
 ttyS2::respawn:/bin/sh
-tty1::respawn:/bin/sh
+tty1::respawn:/usr/sbin/rg353ps-control-center
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/bin/umount -a -r
