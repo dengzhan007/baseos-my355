@@ -43,9 +43,7 @@ index fcf3bd9bcda2..000000000000 100644
  }
  
  static void
-@@ -643,1 +655,12 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
- 	vpu_debug(0, "CAPTURE codec mode: %d\n", ctx->vpu_dst_fmt->codec_mode);
-+
+@@ -649,1 +661,12 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
 +	if (ctx->is_encoder && pix_mp->pixelformat == V4L2_PIX_FMT_JPEG) {
 +		pix_mp->colorspace = V4L2_COLORSPACE_JPEG;
 +		pix_mp->ycbcr_enc = V4L2_YCBCR_ENC_601;
@@ -56,6 +54,8 @@ index fcf3bd9bcda2..000000000000 100644
 +		ctx->dst_fmt.quantization = pix_mp->quantization;
 +		ctx->dst_fmt.xfer_func = pix_mp->xfer_func;
 +	}
+ 
+ 	return 0;
 
 -- 
 2.43.0
