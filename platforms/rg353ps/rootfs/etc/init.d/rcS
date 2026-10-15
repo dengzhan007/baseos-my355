@@ -1,5 +1,5 @@
 #!/bin/sh
-# Minimal RG353PS bring-up init. This deliberately does not launch a frontend yet.
+# Minimal RG353PS bring-up init. The tty1 diagnostic UI is started by BusyBox init.
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export PATH
 
@@ -53,7 +53,7 @@ if [ -x /sbin/modprobe ]; then
 fi
 
 say "BaseOS userspace is up."
-say "This is a hardware test image, not the finished frontend."
+say "The tty1 interactive control test starts next; this is not the finished game frontend."
 
 # Keep later driver notices in the kernel ring buffer without overwriting the
 # diagnostic console. The full log remains available through `dmesg`.
