@@ -135,12 +135,11 @@ raw_defaults_old = """\tfmt->colorspace = V4L2_COLORSPACE_JPEG;
 \tfmt->quantization = V4L2_QUANTIZATION_DEFAULT;
 \tfmt->xfer_func = V4L2_XFER_FUNC_DEFAULT;"""
 raw_defaults_new = """\tif (fmt->pixelformat == V4L2_PIX_FMT_JPEG) {
+\t\t/* V4L2_COLORSPACE_JPEG is shorthand; other fields must be zero. */
 \t\tfmt->colorspace = V4L2_COLORSPACE_JPEG;
-\t\tfmt->ycbcr_enc = V4L2_MAP_YCBCR_ENC_DEFAULT(fmt->colorspace);
-\t\tfmt->quantization =
-\t\t\tV4L2_MAP_QUANTIZATION_DEFAULT(false, fmt->colorspace,
-\t\t\t\t\t\t      fmt->ycbcr_enc);
-\t\tfmt->xfer_func = V4L2_MAP_XFER_FUNC_DEFAULT(fmt->colorspace);
+\t\tfmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
+\t\tfmt->quantization = V4L2_QUANTIZATION_DEFAULT;
+\t\tfmt->xfer_func = V4L2_XFER_FUNC_DEFAULT;
 \t} else {
 \t\tfmt->colorspace = V4L2_COLORSPACE_SRGB;
 \t\tfmt->ycbcr_enc = V4L2_MAP_YCBCR_ENC_DEFAULT(fmt->colorspace);
@@ -167,10 +166,11 @@ out_old = """\t/* Colorimetry information are always propagated. */
 \tctx->dst_fmt.xfer_func = pix_mp->xfer_func;
 \tctx->dst_fmt.quantization = pix_mp->quantization;"""
 out_new = """\tif (ctx->is_encoder && ctx->dst_fmt.pixelformat == V4L2_PIX_FMT_JPEG) {
+\t\t/* V4L2_COLORSPACE_JPEG is shorthand; other fields must be zero. */
 \t\tctx->dst_fmt.colorspace = V4L2_COLORSPACE_JPEG;
-\t\tctx->dst_fmt.ycbcr_enc = V4L2_YCBCR_ENC_601;
-\t\tctx->dst_fmt.quantization = V4L2_QUANTIZATION_FULL_RANGE;
-\t\tctx->dst_fmt.xfer_func = V4L2_XFER_FUNC_SRGB;
+\t\tctx->dst_fmt.ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
+\t\tctx->dst_fmt.quantization = V4L2_QUANTIZATION_DEFAULT;
+\t\tctx->dst_fmt.xfer_func = V4L2_XFER_FUNC_DEFAULT;
 \t} else {
 \t\t/* Colorimetry information are always propagated. */
 \t\tctx->dst_fmt.colorspace = pix_mp->colorspace;
@@ -221,10 +221,11 @@ else:
 
 needle = """\tvpu_debug(0, "CAPTURE codec mode: %d\\\\n", ctx->vpu_dst_fmt->codec_mode);"""
 replacement = """\tif (ctx->is_encoder && pix_mp->pixelformat == V4L2_PIX_FMT_JPEG) {
+\t\t/* V4L2_COLORSPACE_JPEG is shorthand; other fields must be zero. */
 \t\tpix_mp->colorspace = V4L2_COLORSPACE_JPEG;
-\t\tpix_mp->ycbcr_enc = V4L2_YCBCR_ENC_601;
-\t\tpix_mp->quantization = V4L2_QUANTIZATION_FULL_RANGE;
-\t\tpix_mp->xfer_func = V4L2_XFER_FUNC_SRGB;
+\t\tpix_mp->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
+\t\tpix_mp->quantization = V4L2_QUANTIZATION_DEFAULT;
+\t\tpix_mp->xfer_func = V4L2_XFER_FUNC_DEFAULT;
 \t\tctx->dst_fmt.colorspace = pix_mp->colorspace;
 \t\tctx->dst_fmt.ycbcr_enc = pix_mp->ycbcr_enc;
 \t\tctx->dst_fmt.quantization = pix_mp->quantization;
