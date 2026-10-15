@@ -124,7 +124,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
       # pinned kernel source. Keep this as an exact, checked source edit rather
       # than a hand-maintained unified-diff hunk, so CI fails with a clear
       # message if the upstream context ever changes.
-      python3 - <<'PY'
+      python3 - <<PYCODE
 from pathlib import Path
 
 source = Path("drivers/media/platform/verisilicon/hantro_v4l2.c")
@@ -161,7 +161,7 @@ else:
         f"original={old_count}, patched={new_count}"
     )
 
-needle = '\tvpu_debug(0, "CAPTURE codec mode: %d\\n", ctx->vpu_dst_fmt->codec_mode);'
+needle = '\tvpu_debug(0, "CAPTURE codec mode: %d\\\\n", ctx->vpu_dst_fmt->codec_mode);'
 replacement = """\tif (ctx->is_encoder && pix_mp->pixelformat == V4L2_PIX_FMT_JPEG) {
 \t\tpix_mp->colorspace = V4L2_COLORSPACE_JPEG;
 \t\tpix_mp->ycbcr_enc = V4L2_YCBCR_ENC_601;
