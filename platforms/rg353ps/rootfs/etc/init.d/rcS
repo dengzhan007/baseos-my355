@@ -37,6 +37,19 @@ if [ -x /sbin/modprobe ]; then
   else
     say "WARNING: failed to load Hantro VPU driver"
   fi
+  # The DRM display controller is built in, but 3D rendering and RGA are
+  # modular in this kernel config. Load them explicitly in this minimal
+  # userspace, which does not run a full udev daemon for modalias autoloading.
+  if /sbin/modprobe panfrost 2>/dev/null; then
+    say "Panfrost GPU driver loaded"
+  else
+    say "WARNING: failed to load Panfrost GPU driver; 3D acceleration may be unavailable"
+  fi
+  if /sbin/modprobe rockchip_rga 2>/dev/null; then
+    say "Rockchip RGA driver loaded"
+  else
+    say "NOTICE: Rockchip RGA driver unavailable; 2D acceleration may be unavailable"
+  fi
 fi
 
 say "BaseOS userspace is up."
