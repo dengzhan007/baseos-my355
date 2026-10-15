@@ -44,7 +44,7 @@ index fcf3bd9bcda2..000000000000 100644
  
  static void
 @@ -643,1 +655,12 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
- 	vpu_debug(0, "CAPTURE codec mode: %d\\n", ctx->vpu_dst_fmt->codec_mode);
+ 	vpu_debug(0, "CAPTURE codec mode: %d\n", ctx->vpu_dst_fmt->codec_mode);
 +
 +	if (ctx->is_encoder && pix_mp->pixelformat == V4L2_PIX_FMT_JPEG) {
 +		pix_mp->colorspace = V4L2_COLORSPACE_JPEG;
