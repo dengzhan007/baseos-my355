@@ -217,6 +217,7 @@ static void render_home(void)
     printf("  Last input: %-68.68s\n", last_event);
     printf("  Volume +/- keys adjust RK817 playback level.\n");
     printf("  Short Power press shows system information.\n");
+    printf("  Hold Power for 2 seconds to shut down cleanly.\n");
     printf("\n  Serial console remains available on ttyS2 for shell/debug access.\n");
 }
 
@@ -251,8 +252,9 @@ static void render_audio(void)
     ++row;
     printf("\033[%d;3HPCM devices:\n", row++);
     print_file("/proc/asound/pcm", 6, &row);
-    printf("\n  Serial shell: aplay -l  |  amixer scontrols\n");
-    printf("  This menu does not change mixer levels or play sound automatically.\n");
+    printf("\n  Volume +/- keys adjust RK817 Master Playback Volume by 5%.\n");
+    printf("  Serial shell: amixer -c 1 get \"Master Playback Volume\"\n");
+    printf("  No sound is played automatically.\n");
     printf("\n  B (bottom / BTN_SOUTH) returns to menu.\n");
 }
 
@@ -320,6 +322,8 @@ static void render(void)
     case SCREEN_HOME:
     default: render_home(); break;
     }
+    if (current_screen != SCREEN_HOME && current_screen != SCREEN_CONTROLS)
+        printf("\n  Last input: %-68.68s\n", last_event);
     fflush(stdout);
 }
 
