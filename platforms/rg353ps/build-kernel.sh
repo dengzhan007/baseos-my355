@@ -161,7 +161,7 @@ else:
         f"original={old_count}, patched={new_count}"
     )
 
-needle = '\tvpu_debug(0, "CAPTURE codec mode: %d\\\\n", ctx->vpu_dst_fmt->codec_mode);'
+needle = "\tvpu_debug(0, \\"CAPTURE codec mode: %d\\\\n\\", ctx->vpu_dst_fmt->codec_mode);"
 replacement = """\tif (ctx->is_encoder && pix_mp->pixelformat == V4L2_PIX_FMT_JPEG) {
 \t\tpix_mp->colorspace = V4L2_COLORSPACE_JPEG;
 \t\tpix_mp->ycbcr_enc = V4L2_YCBCR_ENC_601;
