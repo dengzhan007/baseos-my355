@@ -129,6 +129,38 @@ from pathlib import Path
 
 source = Path("drivers/media/platform/verisilicon/hantro_v4l2.c")
 text = source.read_text()
+
+raw_defaults_old = """\tfmt->colorspace = V4L2_COLORSPACE_JPEG;
+\tfmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
+\tfmt->quantization = V4L2_QUANTIZATION_DEFAULT;
+\tfmt->xfer_func = V4L2_XFER_FUNC_DEFAULT;"""
+raw_defaults_new = """\tif (fmt->pixelformat == V4L2_PIX_FMT_JPEG) {
+\t\tfmt->colorspace = V4L2_COLORSPACE_JPEG;
+\t\tfmt->ycbcr_enc = V4L2_MAP_YCBCR_ENC_DEFAULT(fmt->colorspace);
+\t\tfmt->quantization =
+\t\t\tV4L2_MAP_QUANTIZATION_DEFAULT(false, fmt->colorspace,
+\t\t\t\t\t\t      fmt->ycbcr_enc);
+\t\tfmt->xfer_func = V4L2_MAP_XFER_FUNC_DEFAULT(fmt->colorspace);
+\t} else {
+\t\tfmt->colorspace = V4L2_COLORSPACE_SRGB;
+\t\tfmt->ycbcr_enc = V4L2_MAP_YCBCR_ENC_DEFAULT(fmt->colorspace);
+\t\tfmt->quantization =
+\t\t\tV4L2_MAP_QUANTIZATION_DEFAULT(false, fmt->colorspace,
+\t\t\t\t\t\t      fmt->ycbcr_enc);
+\t\tfmt->xfer_func = V4L2_MAP_XFER_FUNC_DEFAULT(fmt->colorspace);
+\t}"""
+old_count = text.count(raw_defaults_old)
+new_count = text.count(raw_defaults_new)
+if old_count == 1:
+    text = text.replace(raw_defaults_old, raw_defaults_new, 1)
+elif new_count == 1:
+    pass  # already modified by a prior matching patch; safe to continue
+else:
+    raise SystemExit(
+        "Could not uniquely locate Hantro raw-format defaults: "
+        f"original={old_count}, patched={new_count}"
+    )
+
 needle = '\tvpu_debug(0, "CAPTURE codec mode: %d\\n", ctx->vpu_dst_fmt->codec_mode);'
 replacement = """\tif (ctx->is_encoder && pix_mp->pixelformat == V4L2_PIX_FMT_JPEG) {
 \t\tpix_mp->colorspace = V4L2_COLORSPACE_JPEG;
