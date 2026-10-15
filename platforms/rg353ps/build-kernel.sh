@@ -161,7 +161,7 @@ else:
         f"original={old_count}, patched={new_count}"
     )
 
-needle = "\tvpu_debug(0, \\"CAPTURE codec mode: %d\\\\n\\", ctx->vpu_dst_fmt->codec_mode);"
+needle = """\tvpu_debug(0, "CAPTURE codec mode: %d\\\\n", ctx->vpu_dst_fmt->codec_mode);"""
 replacement = """\tif (ctx->is_encoder && pix_mp->pixelformat == V4L2_PIX_FMT_JPEG) {
 \t\tpix_mp->colorspace = V4L2_COLORSPACE_JPEG;
 \t\tpix_mp->ycbcr_enc = V4L2_YCBCR_ENC_601;
@@ -179,7 +179,7 @@ if count != 1:
     raise SystemExit(f"Expected exactly one Hantro CAPTURE debug anchor, found {count}")
 source.write_text(text.replace(needle, replacement, 1))
 print("Applied checked Hantro JPEG CAPTURE colorimetry fix")
-PY
+PYCODE
 
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
