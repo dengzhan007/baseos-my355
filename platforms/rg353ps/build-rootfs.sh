@@ -77,9 +77,21 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     mkdir -p "$R/etc/apk/keys"
     cp -a /etc/apk/keys/. "$R/etc/apk/keys/"
     cp /etc/apk/repositories "$R/etc/apk/repositories"
-    apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add v4l-utils
+    apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add v4l-utils evtest alsa-utils iw
     test -x "$R/usr/bin/v4l2-ctl" || {
       echo "v4l2-ctl was not installed into target rootfs" >&2
+      exit 1
+    }
+    test -x "$R/usr/bin/evtest" || {
+      echo "evtest was not installed into target rootfs" >&2
+      exit 1
+    }
+    test -x "$R/usr/bin/aplay" || {
+      echo "aplay was not installed into target rootfs" >&2
+      exit 1
+    }
+    test -x "$R/usr/sbin/iw" || test -x "$R/usr/bin/iw" || {
+      echo "iw was not installed into target rootfs" >&2
       exit 1
     }
 
