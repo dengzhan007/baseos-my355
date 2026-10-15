@@ -69,6 +69,15 @@ if ! /bin/mount -t ext4 -o rw,noatime /dev/mmcblk1p4 /data 2>/dev/null; then
 fi
 mark /run/boot-data-mounted
 
+# RG353PS / RK3566: the Hantro VPU driver is a module, not built in.
+# Load it during boot so the decoder and encoder nodes exist before userspace
+# starts. Keep a boot log entry if loading fails, to aid diagnosis.
+if /sbin/modprobe hantro-vpu; then
+	log "hantro-vpu loaded during boot"
+else
+	log "ERROR: failed to load hantro-vpu during boot"
+fi
+
 # The previous boot's ramoops, kept when it oopsed or never reached rcK; a clean
 # reboot leaves a console record too, which is dropped.
 {
