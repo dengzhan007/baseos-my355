@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the RG353PS diagnostic rootfs: BusyBox plus V4L2 inspection tools.
+# Build the RG353PS diagnostic rootfs: BusyBox, hardware tools and evdev console UI.
 # The Miyoo Flip stock-library harvest and all my355-specific scripts are excluded.
 set -eu
 
@@ -33,9 +33,10 @@ echo "== building RG353PS diagnostic rootfs for kernel $KREL =="
 docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
   -v "$WORK":/work \
   -v "$HERE/rootfs":/rootfs-src:ro \
+  -v "$HERE/src":/src:ro \
   -e KREL="$KREL" \
   alpine:3.22 sh -euc '
-    apk add --no-cache busybox-static tar zstd
+    apk add --no-cache busybox-static tar zstd build-base linux-headers
 
     R=/work/rootfs
     rm -rf "$R"
@@ -78,6 +79,13 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     cp -a /etc/apk/keys/. "$R/etc/apk/keys/"
     cp /etc/apk/repositories "$R/etc/apk/repositories"
     apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add v4l-utils evtest alsa-utils iw
+    gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
+      -o "$R/usr/sbin/rg353ps-control-center" /src/rg353ps-control-center.c
+    test -x "$R/usr/sbin/rg353ps-control-center" || {
+      echo "interactive control UI was not built" >&2
+      exit 1
+    }
+
     test -x "$R/usr/bin/v4l2-ctl" || {
       echo "v4l2-ctl was not installed into target rootfs" >&2
       exit 1
@@ -99,6 +107,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     chmod 0755 "$R/usr/sbin/rg353ps-v4l2-report"
     chmod 0755 "$R/usr/sbin/rg353ps-jpeg-encode-test"
     chmod 0755 "$R/usr/sbin/rg353ps-hardware-audit"
+    chmod 0755 "$R/usr/sbin/rg353ps-control-center"
     chmod 1777 "$R/tmp"
     mkdir -p "$R/run" "$R/root" "$R/var/empty"
     printf "root:x:0:0:root:/root:/bin/sh\n" > "$R/etc/passwd"
@@ -122,10 +131,10 @@ EOF
     echo "rootfs prepared at $R"
   '
 
-for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
+for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
   [ -e "$file" ] || { echo "rootfs missing required file: $file" >&2; exit 1; }
 done
 
 echo "RG353PS rootfs ready: $ROOTFS"
 echo "Kernel release: $KREL"
-echo "This rootfs is a test environment and does not include the final game frontend."
+echo "This rootfs includes a controller-responsive diagnostic menu, not the final game frontend."
