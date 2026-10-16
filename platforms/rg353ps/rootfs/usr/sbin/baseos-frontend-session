@@ -164,9 +164,10 @@ resolve_adapter() {
     *) return 1 ;;
   esac
   [ -f "$adapter" ] || return 1
-  # Avoid treating an unpacked-but-incomplete Slot archive as an installed UI.
-  if [ "$2" = "slot" ] && [ ! -x "$adapter_root/System/slot" ]; then
-    log "found Slot adapter at $adapter_root but System/slot is missing or not executable"
+  # FAT/exFAT do not reliably preserve Unix execute bits. For Slot, the
+  # file must exist; its launcher copies it to writable /tmp and chmods it there.
+  if [ "$2" = "slot" ] && [ ! -f "$adapter_root/System/slot" ]; then
+    log "found Slot adapter at $adapter_root but System/slot is missing"
     return 1
   fi
   printf '%s' "$adapter"
