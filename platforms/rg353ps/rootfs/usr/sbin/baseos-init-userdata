@@ -18,6 +18,13 @@ is_mounted() {
   grep -q " $1 " /proc/mounts
 }
 
+# Never store the setup marker in an unmounted /mnt/boot directory: it must
+# persist on the real BOOT partition, or a reboot could initialize repeatedly.
+if ! is_mounted "$BOOT"; then
+  log "$BOOT is not mounted; refusing to partition or format user storage"
+  exit 0
+fi
+
 # Resolve a block partition's parent disk name for the RG353PS (mmcblkXpN).
 parent_disk_name() {
   case "$1" in
