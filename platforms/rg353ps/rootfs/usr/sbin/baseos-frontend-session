@@ -1,12 +1,17 @@
 #!/bin/sh
-# Frontend selector. Config is plain key=value data and is never sourced or eval'd.
+# Automatically discover user-installed frontends: TF2 first, then TF1 user data.
+# Config values are plain key=value data and are never sourced or eval'd.
+set -u
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export PATH
-SDCARD=/mnt/SDCARD
+
+TF1=/mnt/SDCARD
+TF2=/mnt/TF2
 CONFIG=/mnt/boot/baseos.conf
 [ -r "$CONFIG" ] || CONFIG=/etc/baseos.conf
 
 log() { printf 'baseos-frontend: %s\n' "$*" > /dev/kmsg 2>/dev/null || :; }
+is_mounted() { grep -q " $1 " /proc/mounts; }
 
 setting() {
   setting_key=$1
@@ -27,87 +32,199 @@ diagnostic() {
   exec /usr/sbin/rg353ps-control-center
 }
 
-FRONTEND=$(setting frontend diagnostic)
-FRONTEND_DEVICE=$(setting frontend_device /dev/mmcblk2p1)
-FRONTEND_FSTYPE=$(setting frontend_fstype vfat)
-FRONTENDS_ORDER=$(setting frontends_order nextui,slot,custom)
-case "$FRONTEND" in
-  diagnostic) diagnostic ;;
-  auto|nextui|slot|custom) ;;
-  *) log "unknown frontend '$FRONTEND'; falling back to diagnostics"; diagnostic ;;
-esac
-
-mkdir -p "$SDCARD"
-ln -sfn "$SDCARD" /mnt/sdcard
-if ! grep -q " $SDCARD " /proc/mounts; then
-  case "$FRONTEND_DEVICE" in
-    /dev/mmcblk*|/dev/sd*|/dev/nvme*)
-      if [ -b "$FRONTEND_DEVICE" ]; then
-        case "$FRONTEND_FSTYPE" in
-          vfat|ext4|exfat)
-            mount -t "$FRONTEND_FSTYPE" -o rw,noatime "$FRONTEND_DEVICE" "$SDCARD" 2>/dev/null || :
-            ;;
-          *) log "invalid frontend_fstype '$FRONTEND_FSTYPE'; expected vfat, ext4 or exfat" ;;
-        esac
-      fi
-      ;;
-    *) log "invalid frontend_device '$FRONTEND_DEVICE'; expected a block device under /dev" ;;
+parent_disk_name() {
+  case "$1" in
+    *p[0-9]*) printf '%s' "${1%p[0-9]*}" ;;
+    *) return 1 ;;
   esac
+}
+
+# Identify the physical card containing BASEOS_ROOT so it can never be
+# mistake for TF2 while scanning removable-card partitions.
+SYSTEM_DISK=
+for event_file in /sys/class/block/*p*/uevent; do
+  [ -r "$event_file" ] || continue
+  event_dev=
+  event_part=
+  while IFS= read -r event_line || [ -n "$event_line" ]; do
+    case "$event_line" in
+      DEVNAME=*) event_dev=${event_line#DEVNAME=} ;;
+      PARTNAME=*) event_part=${event_line#PARTNAME=} ;;
+    esac
+  done < "$event_file"
+  if [ "$event_part" = "BASEOS_ROOT" ] && [ -n "$event_dev" ]; then
+    SYSTEM_DISK=`$(parent_disk_name "$event_dev") || SYSTEM_DISK=
+    break
+  fi
+done
+
+mkdir -p "$TF1" "$TF2"
+ln -sfn "$TF1" /mnt/sdcard
+
+# Mount the second TF card at a separate path, probing its filesystem instead
+# of assuming FAT. Prefer the historical RG353PS device node, then discover
+# other mmcblkXp1 partitions without ever mounting a partition on TF1's disk.
+try_mount_tf2() {
+  candidate_device=$1
+  [ -b "$candidate_device" ] || return 1
+  candidate_name=${candidate_device#/dev/}
+  candidate_parent=$(parent_disk_name "$candidate_name") || return 1
+  if [ -n "$SYSTEM_DISK" ] && [ "$candidate_parent" = "$SYSTEM_DISK" ]; then
+    return 1
+  fi
+  if is_mounted "$TF2"; then
+    return 0
+  fi
+  if grep -q " $candidate_device " /proc/mounts; then
+    return 1
+  fi
+
+  candidate_type=$(blkid -p -s TYPE -o value "$candidate_device" 2>/dev/null || :)
+  case "$candidate_type" in
+    vfat|exfat|ext4) ;;
+    *) log "skipping $candidate_device: unsupported or unknown filesystem '$candidate_type'"; return 1 ;;
+  esac
+  /sbin/modprobe "$candidate_type" 2>/dev/null || :
+  if mount -t "$candidate_type" -o rw,noatime "$candidate_device" "$TF2" 2>/dev/null; then
+    log "mounted TF2 candidate $candidate_device ($candidate_type) at $TF2"
+    return 0
+  fi
+  log "could not mount TF2 candidate $candidate_device"
+  return 1
+}
+
+TF2_DEVICE=$(setting frontend_device /dev/mmcblk2p1)
+if ! is_mounted "$TF2"; then
+  try_mount_tf2 "$TF2_DEVICE" || :
+  if ! is_mounted "$TF2"; then
+    for event_file in /sys/class/block/mmcblk*p1/uevent; do
+      [ -r "$event_file" ] || continue
+      candidate_name=
+      candidate_part=
+      while IFS= read -r event_line || [ -n "$event_line" ]; do
+        case "$event_line" in
+          DEVNAME=*) candidate_name=${event_line#DEVNAME=} ;;
+          PARTNAME=*) candidate_part=${event_line#PARTNAME=} ;;
+        esac
+      done < "$event_file"
+      [ -n "$candidate_name" ] || continue
+      case "$candidate_part" in BASEOS_BOOT|BASEOS_ROOT|BASEOS_DATA) continue ;; esac
+      [ "/dev/$candidate_name" = "$TF2_DEVICE" ] && continue
+      if try_mount_tf2 "/dev/$candidate_name"; then
+        break
+      fi
+    done
+  fi
 fi
-if ! grep -q " $SDCARD " /proc/mounts; then
-  log "frontend card $FRONTEND_DEVICE is not mounted; falling back to diagnostics"
+if ! is_mounted "$TF2"; then
+  log "TF2 not present or not mountable; TF1 user data will be checked"
+fi
+
+# The init script normally mounts BASEOS_DATA here. Retry a non-destructive
+# mount if that earlier step could not mount an already-formatted user area.
+if ! is_mounted "$TF1"; then
+  for event_file in /sys/class/block/*p*/uevent; do
+    [ -r "$event_file" ] || continue
+    candidate_name=
+    candidate_part=
+    while IFS= read -r event_line || [ -n "$event_line" ]; do
+      case "$event_line" in
+        DEVNAME=*) candidate_name=${event_line#DEVNAME=} ;;
+        PARTNAME=*) candidate_part=${event_line#PARTNAME=} ;;
+      esac
+    done < "$event_file"
+    [ "$candidate_part" = "BASEOS_DATA" ] || continue
+    [ -n "$candidate_name" ] || continue
+    [ -b "/dev/$candidate_name" ] || continue
+    candidate_type=$(blkid -p -s TYPE -o value "/dev/$candidate_name" 2>/dev/null || :)
+    case "$candidate_type" in vfat|exfat) ;; *) continue ;; esac
+    /sbin/modprobe "$candidate_type" 2>/dev/null || :
+    if mount -t "$candidate_type" -o rw,noatime "/dev/$candidate_name" "$TF1" 2>/dev/null; then
+      log "mounted TF1 user data /dev/$candidate_name ($candidate_type) at $TF1"
+      break
+    fi
+  done
+fi
+
+# Legacy `frontend=...` and `allow_external_frontend_adapters=...` keys are
+# intentionally not used: detection is automatic and user-installed frontends
+# are expected to ship their own adapter. force_diagnostic=yes is the explicit
+# troubleshooting override. Adapter scripts must only come from trusted cards.
+if [ "$(setting force_diagnostic no)" = "yes" ]; then
   diagnostic
 fi
 
+FRONTENDS_ORDER=$(setting frontends_order nextui,slot,custom)
+[ -n "$FRONTENDS_ORDER" ] || FRONTENDS_ORDER=nextui,slot,custom
+
 resolve_adapter() {
-  case "$1" in
-    nextui|slot|custom) adapter="$SDCARD/.baseos/frontends/$1/launch.sh" ;;
+  adapter_root=$1
+  case "$2" in
+    nextui|slot|custom) adapter="$adapter_root/.baseos/frontends/$2/launch.sh" ;;
     *) return 1 ;;
   esac
   [ -f "$adapter" ] || return 1
+  # Avoid treating an unpacked-but-incomplete Slot archive as an installed UI.
+  if [ "$2" = "slot" ] && [ ! -x "$adapter_root/System/slot" ]; then
+    log "found Slot adapter at $adapter_root but System/slot is missing or not executable"
+    return 1
+  fi
   printf '%s' "$adapter"
 }
-SELECTED=
-LAUNCHER=
-if [ "$FRONTEND" = "auto" ]; then
+
+scan_root() {
+  scan_root_dir=$1
   old_ifs=$IFS
   IFS=,
   for profile in $FRONTENDS_ORDER; do
     case "$profile" in nextui|slot|custom) ;; *) continue ;; esac
-    candidate=$(resolve_adapter "$profile") || continue
+    candidate=$(resolve_adapter "$scan_root_dir" "$profile") || continue
     SELECTED=$profile
     LAUNCHER=$candidate
-    break
+    FRONTEND_ROOT=$scan_root_dir
+    IFS=$old_ifs
+    return 0
   done
   IFS=$old_ifs
-else
-  SELECTED=$FRONTEND
-  LAUNCHER=$(resolve_adapter "$SELECTED") || LAUNCHER=
+  return 1
+}
+
+SELECTED=
+LAUNCHER=
+FRONTEND_ROOT=
+# Card priority is deliberate: use TF2 if it has a recognized adapter; only
+# fall back to TF1's BASEOS_DATA when TF2 is absent or has no usable frontend.
+if is_mounted "$TF2"; then
+  if scan_root "$TF2"; then
+    log "selected $SELECTED frontend from TF2 ($FRONTEND_ROOT)"
+  else
+    log "TF2 has no usable frontend; checking TF1 user data"
+  fi
 fi
-if [ -z "$LAUNCHER" ] || [ ! -f "$LAUNCHER" ]; then
-  log "no adapter found for frontend '$FRONTEND'; falling back to diagnostics"
+if [ -z "$LAUNCHER" ] && is_mounted "$TF1"; then
+  if scan_root "$TF1"; then
+    log "selected $SELECTED frontend from TF1 ($FRONTEND_ROOT)"
+  fi
+fi
+if [ -z "$LAUNCHER" ]; then
+  log "no usable frontend found on TF2 or TF1; falling back to diagnostics"
   diagnostic
 fi
 
-# Opt in explicitly before any frontend-card adapter is executed as root.
-ALLOW_EXTERNAL_ADAPTERS=$(setting allow_external_frontend_adapters no)
-if [ "$ALLOW_EXTERNAL_ADAPTERS" != "yes" ]; then
-  log "external adapter execution disabled; set allow_external_frontend_adapters=yes in baseos.conf to opt in"
-  diagnostic
-fi
-
+# Keep the compatibility alias aligned with the card actually selected.
+ln -sfn "$FRONTEND_ROOT" /mnt/sdcard
 PLATFORM=rg353ps
 BASEOS_FRONTEND_ID=$SELECTED
 BASEOS_SYSTEM_ROOT=/
 BASEOS_BOOT=/mnt/boot
-BASEOS_FRONTEND_ROOT=$SDCARD
-BASEOS_DATA_DIR="$SDCARD/.baseos/data"
-BASEOS_USERDATA_DIR="$SDCARD/.baseos/userdata"
+BASEOS_FRONTEND_ROOT=$FRONTEND_ROOT
+BASEOS_DATA_DIR="$FRONTEND_ROOT/.baseos/data"
+BASEOS_USERDATA_DIR="$FRONTEND_ROOT/.baseos/userdata"
 BASEOS_LAUNCHER=$LAUNCHER
 export PLATFORM BASEOS_FRONTEND_ID BASEOS_SYSTEM_ROOT BASEOS_BOOT
 export BASEOS_FRONTEND_ROOT BASEOS_DATA_DIR BASEOS_USERDATA_DIR BASEOS_LAUNCHER
 mkdir -p "$BASEOS_DATA_DIR" "$BASEOS_USERDATA_DIR" 2>/dev/null || :
-cd "$SDCARD" || diagnostic
+cd "$FRONTEND_ROOT" || diagnostic
 log "launching $SELECTED adapter: $LAUNCHER"
 /bin/sh "$LAUNCHER"
 rc=$?
