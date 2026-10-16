@@ -366,6 +366,7 @@ if [ ! -e "$MARKER" ] || [ "$MARKER_PARTITION" != "$DATA_DEV" ] \
   else
     log "mounted user data but could not persist the initialization marker on $BOOT"
   fi
-filog "user space mounted at $USERDATA from $DATA_DEV ($FS_TYPE)"
+fi
+log "user space mounted at $USERDATA from $DATA_DEV ($FS_TYPE)"
 splash 100 "USER STORAGE READY"
 exit 0
