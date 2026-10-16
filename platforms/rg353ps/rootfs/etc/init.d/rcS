@@ -13,6 +13,7 @@ mount -t tmpfs -o mode=1777 tmpfs /tmp 2>/dev/null || :
 echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null || :
 /sbin/mdev -s 2>/dev/null || :
 /usr/sbin/baseos-mount-storage
+/usr/sbin/baseos-init-userdata
 
 say() {
   echo "$*" > /dev/kmsg 2>/dev/null || :
