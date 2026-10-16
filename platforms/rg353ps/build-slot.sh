@@ -82,7 +82,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
 BaseOS RG353PS Slot frontend experiment
 =======================================
 
-This bundle is intended to be extracted directly into the root of the TF2 card for priority use. BaseOS automatically scans TF2 first for a usable frontend adapter; if TF2 is absent or has no usable frontend, BaseOS checks TF1's BASEOS_DATA user partition.
+This bundle is intended to be extracted directly into the root of the TF2 card for priority use. BaseOS automatically scans TF2 first for a usable frontend adapter; if TF2 is absent or has no usable frontend, BaseOS checks the BASEOS_DATA user partition on TF1.
 
 No baseos.conf edits are required. The second card is mounted at /mnt/TF2 and this adapter is:
   /mnt/TF2/.baseos/frontends/slot/launch.sh
