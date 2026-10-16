@@ -67,9 +67,20 @@ process ran until the timeout; an earlier EGL/DRM error is a failure to
 investigate. Run it from the serial shell when no other application owns the
 DRM display; it temporarily modesets the built-in screen.
 
-A passing KMS/EGL/GLES test still does not verify SDL's video backend, audio,
-or the NextUI/Slot runtime. Those are the next separate validation steps. The
-October 2026 report also showed the device clock about 10 days ahead of the
+The script also runs a small SDL2 test program through `SDL_VIDEODRIVER=kmsdrm`.
+If successful, the internal screen should display red, green, blue and dark
+screens for about eight seconds. It prints the actual SDL video backend,
+display mode, GLES renderer and version, then exits cleanly. This is the
+next milestone for frontend compatibility; it still does not prove NextUI or
+Slot itself can run.
+
+For the earlier KMS cube test, BusyBox `timeout` may report exit code 143
+after stopping `kmscube` with SIGTERM (rather than the more common 124).
+Either can be expected if the cube stayed on screen for the timed interval and
+there were no earlier DRM/EGL errors. EGL warnings for unavailable Wayland/X11
+are not, by themselves, evidence that the headless GBM/KMS path failed.
+
+The October 2026 report also showed the device clock about 10 days ahead of the
 current date; check `date -u` and fix time synchronization before diagnosing
 TLS/download errors.
 
