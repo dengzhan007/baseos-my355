@@ -82,6 +82,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
     mmd -i "$BOOTFS" ::/device_trees
     mcopy -i "$BOOTFS" /work/kernel/output/Image ::/Image
     mcopy -i "$BOOTFS" /work/kernel/output/rk3566-anbernic-rg353ps.dtb ::/device_trees/rk3566-anbernic-rg353ps.dtb
+    mcopy -o -i "$BOOTFS" /work/rootfs/etc/baseos.conf ::/baseos.conf
 
     cat > /tmp/extlinux.conf <<EOF
 LABEL BaseOS-RG353PS
