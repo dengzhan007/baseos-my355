@@ -88,8 +88,8 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
       -o "$R/usr/sbin/rg353ps-hotkeyd" /src/rg353ps-hotkeyd.c
     # Build a target-native SDL2 KMSDRM/GLES test against the runtime library
     # already installed in the target rootfs. sdl2-dev is build-container only.
-    gcc -std=c11 -O2 -Wall -Wextra -Werror \\
-      $(sdl2-config --cflags) -o "$R/usr/sbin/rg353ps-sdl2-test" \\
+    gcc -std=c11 -O2 -Wall -Wextra -Werror \
+      $(sdl2-config --cflags) -o "$R/usr/sbin/rg353ps-sdl2-test" \
       /src/rg353ps-sdl2-test.c $(sdl2-config --libs)
     test -x "$R/usr/sbin/rg353ps-hotkeyd" || {
       echo "global hotkey service was not built" >&2
