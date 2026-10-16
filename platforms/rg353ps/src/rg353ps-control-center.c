@@ -477,9 +477,9 @@ static int adjust_volume(int volume_up)
                 (void)close(nullfd);
         }
         execl("/usr/bin/amixer", "amixer", "-c", "1", "set",
-              "Master", volume_up ? "5%+" : "5%-", (char *)NULL);
+              "Master", "playback", volume_up ? "5%+" : "5%-", (char *)NULL);
         execl("/usr/sbin/amixer", "amixer", "-c", "1", "set",
-              "Master", volume_up ? "5%+" : "5%-", (char *)NULL);
+              "Master", "playback", volume_up ? "5%+" : "5%-", (char *)NULL);
         _exit(127);
     }
     while (waitpid(child, &status, 0) < 0) {
