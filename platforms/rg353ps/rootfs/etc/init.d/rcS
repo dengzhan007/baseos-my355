@@ -14,9 +14,16 @@ echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null || :
 /sbin/mdev -s 2>/dev/null || :
 /usr/sbin/baseos-mount-storage
 
+# The kernel's DRM fbdev emulation is ready by this point. Use the user's
+# editable BASEOS_BOOT/bootlogo.bmp if present, otherwise the packaged default.
+# The status helper draws only a small overlay and leaves this image visible.
+if ! /usr/sbin/baseos-bootlogo; then
+  /usr/bin/fbsplash 0 >/dev/null 2>&1 || :
+fi
+
 say() {
+  # Keep diagnostic details in the kernel log and serial console, not on screen.
   echo "$*" > /dev/kmsg 2>/dev/null || :
-  echo "$*" > /dev/tty0 2>/dev/null || :
   echo "$*" > /dev/ttyS2 2>/dev/null || :
 }
 
@@ -27,30 +34,20 @@ if [ -r /proc/device-tree/model ]; then
   say "Device: $MODEL"
 fi
 
-# Storage and panel support are built into this kernel configuration. Load the
-# mainline RTL8821CS Wi-Fi function; Bluetooth is attached through UART/serdev.
+# The 3D driver must be present before the frontend opens EGL. Probe optional
+# Wi-Fi/BT, video decode and RGA drivers off the critical path so the main menu
+# does not wait for unrelated devices to finish initializing.
 if [ -x /sbin/modprobe ]; then
-  /sbin/modprobe rtw88_8821cs 2>/dev/null || :
-  /sbin/modprobe hci_uart 2>/dev/null || :
-  /sbin/modprobe btrtl 2>/dev/null || :
-  if /sbin/modprobe hantro-vpu 2>/dev/null; then
-    say "Hantro VPU driver loaded (decoder/encoder nodes should be available)"
-  else
-    say "WARNING: failed to load Hantro VPU driver"
-  fi
-  # The DRM display controller is built in, but 3D rendering and RGA are
-  # modular in this kernel config. Load them explicitly in this minimal
-  # userspace, which does not run a full udev daemon for modalias autoloading.
-  if /sbin/modprobe panfrost 2>/dev/null; then
-    say "Panfrost GPU driver loaded"
-  else
+  (
+    /sbin/modprobe rtw88_8821cs 2>/dev/null || :
+    /sbin/modprobe hci_uart 2>/dev/null || :
+    /sbin/modprobe btrtl 2>/dev/null || :
+  ) >/dev/null 2>&1 &
+  /sbin/modprobe panfrost 2>/dev/null || {
     say "WARNING: failed to load Panfrost GPU driver; 3D acceleration may be unavailable"
-  fi
-  if /sbin/modprobe rockchip_rga 2>/dev/null; then
-    say "Rockchip RGA driver loaded"
-  else
-    say "NOTICE: Rockchip RGA driver unavailable; 2D acceleration may be unavailable"
-  fi
+  }
+  /sbin/modprobe hantro-vpu >/dev/null 2>&1 &
+  /sbin/modprobe rockchip_rga >/dev/null 2>&1 &
 fi
 
 # Global hotkeys must work regardless of which UI is selected.
@@ -64,37 +61,26 @@ say "The tty1 frontend-session manager starts next; diagnostics remain the fallb
 # diagnostic console. The full log remains available through `dmesg`.
 dmesg -n 4 2>/dev/null || :
 
-# Do not let BusyBox init start tty1's frontend selector until the system card's
-# user-data partition has really been initialized and mounted. On a fresh image
-# the full-screen progress prompt stays visible while partition work runs.
+# Keep the screen on the customizable logo during ordinary boots. Only a
+# first boot gets the progress pill; once userdata is ready the frontend starts
+# automatically, with no extra confirmation delay.
 BOOT_STORAGE_MARKER=/mnt/boot/.baseos-userdata-v1
-BOOT_CONFIRM_MARKER=/mnt/boot/.baseos-firstboot-confirmed-v1
-if [ ! -e "$BOOT_STORAGE_MARKER" ]; then
-  /usr/sbin/rg353ps-startup-prompt --initializing
+FIRST_BOOT=0
+[ -e "$BOOT_STORAGE_MARKER" ] || FIRST_BOOT=1
+if [ "$FIRST_BOOT" = 1 ]; then
+  /usr/bin/baseos-splash --important 0 "PREPARING USER STORAGE" >/dev/null 2>&1 || :
 fi
 
 while :; do
-  /usr/sbin/baseos-init-userdata
+  /usr/sbin/baseos-init-userdata >/dev/null 2>&1 || :
   if grep -q " /mnt/SDCARD " /proc/mounts && [ -e "$BOOT_STORAGE_MARKER" ]; then
     break
   fi
-  say "User storage is not ready; tty1 UI is held until initialization succeeds."
-  /usr/sbin/rg353ps-startup-prompt --retry
+  say "User storage is not ready; retrying initialization."
+  /usr/bin/baseos-splash --important -1 "STORAGE ERROR - RETRYING" >/dev/null 2>&1 || :
+  sleep 1
 done
 
-# A one-time acknowledgement is required after first successful initialization.
-# The acknowledgement is stored on the actual mounted BOOT FAT filesystem, so
-# it survives power cycles and the full-screen prompt does not recur each boot.
-if [ ! -e "$BOOT_CONFIRM_MARKER" ]; then
-  while [ ! -e "$BOOT_CONFIRM_MARKER" ]; do
-    if /usr/sbin/rg353ps-startup-prompt --ready; then
-      if printf 'confirmed=1\n' > "$BOOT_CONFIRM_MARKER"; then
-        sync
-      else
-        say "WARNING: unable to persist first-boot acknowledgement on BASEOS_BOOT."
-      fi
-    else
-      say "First-boot confirmation screen failed; retrying without starting tty1 UI."
-    fi
-  done
+if [ "$FIRST_BOOT" = 1 ]; then
+  /usr/bin/baseos-splash --important -1 "LOADING FRONTEND" >/dev/null 2>&1 || :
 fi
