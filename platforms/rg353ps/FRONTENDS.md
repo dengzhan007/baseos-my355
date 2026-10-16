@@ -48,20 +48,11 @@ mGBA/gpSP source archives and patch/license materials under
 `System/licenses/`. Do not consider the bundle device-validated until its CI
 build passes and it has been smoke-tested on the handheld.
 
-When a successful `baseos-rg353ps-slot` workflow artifact is available, boot
-once with the new three-partition image, shut down, and put the TF card in a PC.
-Extract the ZIP contents to the root of the `BASEOS_DATA` user partition (not
-`BASEOS_BOOT`). Then edit `baseos.conf` on the FAT `BASEOS_BOOT` partition:
+When a successful `baseos-rg353ps-slot` workflow artifact is available, back up the card and flash the new three-partition image if your current image predates `BASEOS_DATA`. Shut down after the first boot so the data partition can finish initializing.
 
-```
-frontend=slot
-allow_external_frontend_adapters=yes
-```
+To install Slot on TF2, extract the ZIP contents directly into the root of the TF2 card (not into a containing folder, and not onto `BASEOS_BOOT`). To install it on TF1 instead, extract the same contents into the root of the `BASEOS_DATA` partition. No `baseos.conf` edits are required: BaseOS automatically chooses a usable frontend on TF2 first, then falls back to TF1 user data.
 
-The opt-in is required because adapters located on the external frontend card
-are shell scripts executed as root. If the adapter is missing or the opt-in is
-not enabled, BaseOS falls back to the diagnostic UI. Keep the original system
-card and your saves backed up while testing.
+Keep the original system card and your saves backed up while testing. Because the frontend adapter is a shell script executed with root privileges, only install packages you trust.
 
 This first target is intentionally a limited milestone: successful compilation
 or menu launch does not establish correctness of all buttons, sound, battery,
