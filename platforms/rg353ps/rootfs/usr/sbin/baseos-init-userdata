@@ -60,6 +60,23 @@ find_partition() {
   return 1
 }
 
+# RG353PS uses mmcblkXpN names. This fallback recovers partition 3 if a PC
+# formatter preserved the partition but cleared its GPT name. It only renames
+# a blank partition or an existing exFAT/FAT volume; other filesystems/signatures
+# are never overwritten or relabeled.
+find_partition_number() {
+  wanted_number=$1
+  expected_disk=$2
+  candidate_name="${expected_disk}p${wanted_number}"
+  candidate_dev="/dev/$candidate_name"
+  FOUND_DEV=
+  FOUND_NAME=
+  [ -b "$candidate_dev" ] || return 1
+  FOUND_DEV=$candidate_dev
+  FOUND_NAME=$candidate_name
+  return 0
+}
+
 mkdir -p "$USERDATA"
 
 # If this partition is already mounted by an earlier init hook, leave it alone.
@@ -105,24 +122,62 @@ DISK="/dev/$DISK_NAME"
 # Locate BASEOS_DATA. Older smoke images had only BOOT and ROOT; on a larger
 # physical card create partition 3 in the unused space after the 2 GiB image.
 if ! find_partition BASEOS_DATA "$DISK_NAME"; then
-  if [ -e "$MARKER" ]; then
-    log "storage marker exists but BASEOS_DATA is missing; refusing to repartition"
-    exit 0
+  # Recover an existing p3 first, which may have been formatted on a PC before
+  # its GPT partition name was recognized by BaseOS.
+  if find_partition_number 3 "$DISK_NAME"; then
+    EXISTING_TYPE=$(blkid -p -s TYPE -o value "$FOUND_DEV" 2>/dev/null || :)
+    case "$EXISTING_TYPE" in
+      exfat|vfat) ;;
+      "")
+        EXISTING_SIG=$(wipefs -n --noheadings --output TYPE "$FOUND_DEV" 2>/dev/null || :)
+        if [ -n "$(printf '%s' "$EXISTING_SIG" | tr -d '[:space:]')" ]; then
+          log "$FOUND_DEV has an unknown signature and no BASEOS_DATA label; refusing to rename or format it"
+          exit 0
+        fi
+        ;;
+      *)
+        log "$FOUND_DEV has filesystem '$EXISTING_TYPE' and no BASEOS_DATA label; refusing to rename or format it"
+        exit 0
+        ;;
+    esac
+    if ! sgdisk --typecode=3:0700 --change-name=3:BASEOS_DATA "$DISK" >/dev/null 2>&1; then
+      log "could not restore BASEOS_DATA GPT name on $FOUND_DEV"
+      exit 0
+    fi
+    partx -u -n 3 "$DISK" >/dev/null 2>&1 || :
+    /sbin/mdev -s 2>/dev/null || :
+    sleep 1
+    find_partition BASEOS_DATA "$DISK_NAME" || {
+      # Keep the already identified numbered device usable if only PARTNAME
+      # metadata refresh is delayed; no new partition was created.
+      FOUND_DEV="/dev/${DISK_NAME}p3"
+      FOUND_NAME="${DISK_NAME}p3"
+      [ -b "$FOUND_DEV" ] || {
+        log "renamed p3 but the kernel device node is unavailable; reboot and inspect"
+        exit 0
+      }
+    }
+    log "recovered user-data partition $FOUND_DEV by partition number"
+  else
+    if [ -e "$MARKER" ]; then
+      log "storage marker exists but BASEOS_DATA is missing; refusing to repartition"
+      exit 0
+    fi
+    log "BASEOS_DATA absent; checking for free space after system partitions on $DISK"
+    if ! sgdisk --move-second-header --new=3:0:0 --typecode=3:0700 \
+        --change-name=3:BASEOS_DATA "$DISK" >/dev/null 2>&1; then
+      log "could not create BASEOS_DATA (card may be no larger than the old 2 GiB smoke image)"
+      exit 0
+    fi
+    partx -u -n 3 "$DISK" >/dev/null 2>&1 || :
+    /sbin/mdev -s 2>/dev/null || :
+    sleep 1
+    find_partition BASEOS_DATA "$DISK_NAME" || {
+      log "BASEOS_DATA was added to GPT but its kernel device node did not appear; reboot and inspect"
+      exit 0
+    }
+    log "created $FOUND_DEV in free space"
   fi
-  log "BASEOS_DATA absent; checking for free space after system partitions on $DISK"
-  if ! sgdisk --move-second-header --new=3:0:0 --typecode=3:0700 \
-      --change-name=3:BASEOS_DATA "$DISK" >/dev/null 2>&1; then
-    log "could not create BASEOS_DATA (card may be no larger than the old 2 GiB smoke image)"
-    exit 0
-  fi
-  partx -u -n 3 "$DISK" >/dev/null 2>&1 || :
-  /sbin/mdev -s 2>/dev/null || :
-  sleep 1
-  find_partition BASEOS_DATA "$DISK_NAME" || {
-    log "BASEOS_DATA was added to GPT but its kernel device node did not appear; reboot and inspect"
-    exit 0
-  }
-  log "created $FOUND_DEV in free space"
 fi
 
 DATA_DEV=$FOUND_DEV
