@@ -161,11 +161,20 @@ if [ -z "$FS_TYPE" ] && [ ! -e "$MARKER" ]; then
   NEW_END=$(sgdisk --info=3 "$DISK" | sed -n 's/^Last sector: *\\([0-9][0-9]*\\).*/\\1/p')
   ACTUAL_START=$(cat "/sys/class/block/$DATA_NAME/start" 2>/dev/null || :)
   ACTUAL_SIZE=$(cat "/sys/class/block/$DATA_NAME/size" 2>/dev/null || :)
-  case "$NEW_END:$ACTUAL_START:$ACTUAL_SIZE" in
-    *[!0-9:]*|::*|:*:|::)
-      log "could not verify kernel partition size for $DATA_DEV; refusing to format"
-      exit 0
-      ;;
+  case "$NEW_END" in ''|*[!0-9]*)
+    log "could not read GPT end sector for $DATA_DEV; refusing to format"
+    exit 0
+    ;;
+  esac
+  case "$ACTUAL_START" in ''|*[!0-9]*)
+    log "could not read kernel start sector for $DATA_DEV; refusing to format"
+    exit 0
+    ;;
+  esac
+  case "$ACTUAL_SIZE" in ''|*[!0-9]*)
+    log "could not read kernel size for $DATA_DEV; refusing to format"
+    exit 0
+    ;;
   esac
   EXPECTED_SIZE=$((NEW_END - START + 1))
   if [ "$ACTUAL_START" -ne "$START" ] || [ "$ACTUAL_SIZE" -lt "$EXPECTED_SIZE" ]; then
