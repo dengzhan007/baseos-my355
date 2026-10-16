@@ -32,7 +32,7 @@ jobs:
           sh -n platforms/rg353ps/frontends/slot/launch.sh
 
       - name: Build Slot, patched for SDL2 KMSDRM and musl
-        run: ./platforms/rg353ps/build-slot.sh
+        run: sh ./platforms/rg353ps/build-slot.sh
 
       - name: Publish experimental Slot bundle
         uses: actions/upload-artifact@v4
