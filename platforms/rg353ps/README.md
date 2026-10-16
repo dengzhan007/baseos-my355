@@ -21,33 +21,11 @@ and clean shutdown on a 2-second power-key hold. Remaining work includes actual
 audio playback, Wi-Fi/BT association and audio, battery/charging accuracy, HDMI,
 3D graphics, suspend/resume, storage endurance and long-duration stability.
 
-**This remains an experimental bring-up image, not a finished BaseOS release.**
-The built-in diagnostic UI remains the default. The rootfs now contains a
-global hotkey service for RK817 playback-only volume changes and clean shutdown
-after a 2-second power hold, plus a configurable frontend-session manager.
-Edit `baseos.conf` on the FAT `BASEOS_BOOT` partition and select
-`frontend=diagnostic`, `auto`, `nextui`, `slot` or `custom`. Adapters are
-looked up under `/mnt/SDCARD/.baseos/frontends/<name>/launch.sh`; the second
-card defaults to `/dev/mmcblk2p1`, configurable through `frontend_device`
-and `frontend_fstype`. External adapters are disabled by default and require
-`allow_external_frontend_adapters=yes`. Missing or exiting frontends fall back
-to diagnostics.
+**This remains an experimental bring-up image, not a finished BaseOS release.** The built-in diagnostic UI is the fallback when no usable frontend adapter is found. Frontend selection is automatic; users do not need to edit `baseos.conf` to identify a frontend.
 
-This is a selection/adapter framework, not a claim that NextUI or Slot already
-run on RK3566. Their binary ABI/libraries, video backend, audio stack, controller
-mapping and emulator payloads still need device-specific compatibility work.
-The new image layout separates `BASEOS_BOOT`, a fixed-size `BASEOS_ROOT`,
-and `BASEOS_DATA` for frontend/user files. At first boot, the blank user
-partition is expanded to the physical card's end and formatted as exFAT, then
-mounted at `/mnt/SDCARD`. This means frontend packages, ROMs and saves belong
-on `BASEOS_DATA`, not on the small FAT boot partition. Existing images from
-before this change do not gain a dedicated partition unless reflashed with the
-new image; back up the card first. The boot partition remains visible to a PC
-for boot files and `baseos.conf`; the Linux root partition is separate from
-user files. The system still lacks a final read-only root, A/B updater and
-release packaging. Use a spare TF card. The file
-`work/rg353ps/rg353ps-uboot.bin` remains an intermediate bootloader region,
-not a standalone SD-card image.
+At boot, BaseOS scans TF2 first (normally `/dev/mmcblk2p1`) and mounts it at `/mnt/TF2`. If the card root contains a recognized, usable adapter at `.baseos/frontends/<name>/launch.sh`, that frontend is selected. If TF2 is absent, cannot be mounted, or has no usable frontend, BaseOS scans TF1's `BASEOS_DATA` partition at `/mnt/SDCARD`. The `/mnt/sdcard` compatibility link follows the selected frontend root. If neither card contains a usable adapter, the diagnostic UI starts. The old `frontend=...` and `allow_external_frontend_adapters=...` configuration keys are ignored; frontend adapter scripts execute with root privileges, so install only trusted packages.
+
+The image layout separates `BASEOS_BOOT`, a fixed-size `BASEOS_ROOT`, and `BASEOS_DATA` for frontend/user files. At first boot, the blank user partition is expanded to the physical card's end and formatted as exFAT, then mounted at `/mnt/SDCARD`. Install frontend ZIP contents at the root of TF2 for priority use, or at the root of TF1's `BASEOS_DATA` for fallback use—not on the small FAT boot partition. Existing images from before this change do not gain a dedicated user-data partition unless reflashed; back up the card first. The boot partition remains visible to a PC for maintenance, while the Linux root partition is separate from user files. The system still lacks a final read-only root, A/B updater and release packaging. Use a spare TF card. The file `work/rg353ps/rg353ps-uboot.bin` remains an intermediate bootloader region, not a standalone SD-card image.
 
 For details, see [FRONTENDS.md](FRONTENDS.md).
 
