@@ -1,0 +1,195 @@
+#!/bin/sh
+# First-boot initializer for the dedicated BASEOS_DATA user partition.
+# Only a blank, signature-free data partition may be formatted. Existing
+# recognized FAT/exFAT data is mounted without formatting.
+set -u
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+BOOT=/mnt/boot
+USERDATA=/mnt/SDCARD
+MARKER="$BOOT/.baseos-userdata-v1"
+
+log() {
+  printf 'baseos-userdata: %s\n' "$*" > /dev/kmsg 2>/dev/null || :
+}
+
+is_mounted() {
+  grep -q " $1 " /proc/mounts
+}
+
+# Resolve a block partition's parent disk name for the RG353PS (mmcblkXpN).
+parent_disk_name() {
+  case "$1" in
+    *p[0-9]*) printf '%s' "${1%p[0-9]*}" ;;
+    *) return 1 ;;
+  esac
+}
+
+find_partition() {
+  wanted=$1
+  expected_disk=$2
+  FOUND_DEV=
+  FOUND_NAME=
+  for event_file in /sys/class/block/*p*/uevent; do
+    [ -r "$event_file" ] || continue
+    event_dev=
+    event_part=
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        DEVNAME=*) event_dev=${line#DEVNAME=} ;;
+        PARTNAME=*) event_part=${line#PARTNAME=} ;;
+      esac
+    done < "$event_file"
+    [ "$event_part" = "$wanted" ] || continue
+    [ -n "$event_dev" ] || continue
+    event_parent=$(parent_disk_name "$event_dev") || continue
+    [ "$event_parent" = "$expected_disk" ] || continue
+    [ -b "/dev/$event_dev" ] || continue
+    FOUND_DEV="/dev/$event_dev"
+    FOUND_NAME="$event_dev"
+    return 0
+  done
+  return 1
+}
+
+mkdir -p "$USERDATA"
+
+# If this partition is already mounted by an earlier init hook, leave it alone.
+if is_mounted "$USERDATA"; then
+  log "$USERDATA already mounted"
+  exit 0
+fi
+
+# Find the root partition by GPT name, then only touch partitions on that disk.
+ROOT_DEV=
+ROOT_NAME=
+for event_file in /sys/class/block/*p*/uevent; do
+  [ -r "$event_file" ] || continue
+  event_dev=
+  event_part=
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      DEVNAME=*) event_dev=${line#DEVNAME=} ;;
+      PARTNAME=*) event_part=${line#PARTNAME=} ;;
+    esac
+  done < "$event_file"
+  if [ "$event_part" = "BASEOS_ROOT" ] && [ -n "$event_dev" ] && [ -b "/dev/$event_dev" ]; then
+    ROOT_DEV="/dev/$event_dev"
+    ROOT_NAME="$event_dev"
+    break
+  fi
+done
+
+if [ -z "$ROOT_NAME" ]; then
+  log "cannot identify BASEOS_ROOT; refusing to change any partition table"
+  exit 0
+fi
+DISK_NAME=$(parent_disk_name "$ROOT_NAME") || {
+  log "cannot derive parent disk from $ROOT_NAME; refusing partition changes"
+  exit 0
+}
+DISK="/dev/$DISK_NAME"
+[ -b "$DISK" ] || {
+  log "system disk $DISK is not a block device"
+  exit 0
+}
+
+# Locate BASEOS_DATA. Older smoke images had only BOOT and ROOT; on a larger
+# physical card create partition 3 in the unused space after the 2 GiB image.
+if ! find_partition BASEOS_DATA "$DISK_NAME"; then
+  if [ -e "$MARKER" ]; then
+    log "storage marker exists but BASEOS_DATA is missing; refusing to repartition"
+    exit 0
+  fi
+  log "BASEOS_DATA absent; checking for free space after system partitions on $DISK"
+  if ! sgdisk --move-second-header --new=3:0:0 --typecode=3:0700 \
+      --change-name=3:BASEOS_DATA "$DISK" >/dev/null 2>&1; then
+    log "could not create BASEOS_DATA (card may be no larger than the old 2 GiB smoke image)"
+    exit 0
+  fi
+  partx -u -n 3 "$DISK" >/dev/null 2>&1 || :
+  /sbin/mdev -s 2>/dev/null || :
+  sleep 1
+  find_partition BASEOS_DATA "$DISK_NAME" || {
+    log "BASEOS_DATA was added to GPT but its kernel device node did not appear; reboot and inspect"
+    exit 0
+  }
+  log "created $FOUND_DEV in free space"
+fi
+
+DATA_DEV=$FOUND_DEV
+DATA_NAME=$FOUND_NAME
+FS_TYPE=$(blkid -p -s TYPE -o value "$DATA_DEV" 2>/dev/null || :)
+
+if [ -z "$FS_TYPE" ] && [ ! -e "$MARKER" ]; then
+  # A blank partition from a newly flashed image has no filesystem signatures.
+  # Never format a partition if wipefs finds any existing signature.
+  SIGNATURES=$(wipefs -n --noheadings --output TYPE "$DATA_DEV" 2>/dev/null || :)
+  if [ -n "$(printf '%s' "$SIGNATURES" | tr -d '[:space:]')" ]; then
+    log "$DATA_DEV has an unrecognized signature; refusing to format it"
+    exit 0
+  fi
+
+  START_FILE="/sys/class/block/$DATA_NAME/start"
+  [ -r "$START_FILE" ] || {
+    log "cannot read starting sector for $DATA_DEV; refusing to resize"
+    exit 0
+  }
+  START=$(cat "$START_FILE")
+  case "$START" in ''|*[!0-9]*) log "invalid start sector '$START'"; exit 0 ;; esac
+
+  # Move the backup GPT to the actual end of the card and extend partition 3
+  # while it is still blank. Formatting happens only after this succeeds.
+  if ! sgdisk --move-second-header --delete=3 --new="3:$START:0" \
+      --typecode=3:0700 --change-name=3:BASEOS_DATA "$DISK" >/dev/null 2>&1; then
+    log "failed to extend blank BASEOS_DATA to the end of $DISK"
+    exit 0
+  fi
+  partx -u -n 3 "$DISK" >/dev/null 2>&1 || :
+  /sbin/mdev -s 2>/dev/null || :
+  sleep 1
+  find_partition BASEOS_DATA "$DISK_NAME" || {
+    log "extended partition has no kernel device node yet; reboot and inspect"
+    exit 0
+  }
+  DATA_DEV=$FOUND_DEV
+
+  if ! mkfs.exfat -L BASEOS_DATA "$DATA_DEV" >/dev/null 2>&1; then
+    log "formatting $DATA_DEV as exFAT failed; no user data was mounted"
+    exit 0
+  fi
+  FS_TYPE=exfat
+  log "formatted new user partition $DATA_DEV as exFAT"
+elif [ -z "$FS_TYPE" ]; then
+  log "BASEOS_DATA has no recognizable filesystem but the initialization marker exists; refusing to format"
+  exit 0
+else
+  case "$FS_TYPE" in
+    exfat|vfat) log "preserving existing $FS_TYPE filesystem on $DATA_DEV" ;;
+    *) log "unsupported existing filesystem '$FS_TYPE' on $DATA_DEV; refusing to format"; exit 0 ;;
+  esac
+fi
+
+case "$FS_TYPE" in
+  exfat|vfat) ;;
+  *) log "unsupported filesystem '$FS_TYPE'"; exit 0 ;;
+esac
+
+/sbin/modprobe exfat 2>/dev/null || :
+if ! mount -t "$FS_TYPE" -o rw,noatime "$DATA_DEV" "$USERDATA" 2>/dev/null; then
+  log "failed to mount $DATA_DEV ($FS_TYPE) at $USERDATA"
+  exit 0
+fi
+
+mkdir -p "$USERDATA/.baseos" "$USERDATA/Games" "$USERDATA/BIOS" \
+  "$USERDATA/Saves" "$USERDATA/States" "$USERDATA/System" 2>/dev/null || :
+if [ ! -e "$MARKER" ]; then
+  if printf 'version=1\npartition=%s\nfilesystem=%s\n' "$DATA_DEV" "$FS_TYPE" > "$MARKER"; then
+    sync
+  else
+    log "mounted user data but could not persist initialization marker on $BOOT"
+  fi
+fi
+log "user space mounted at $USERDATA from $DATA_DEV ($FS_TYPE)"
+exit 0
