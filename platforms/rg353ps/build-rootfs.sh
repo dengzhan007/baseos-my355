@@ -34,9 +34,11 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
   -v "$WORK":/work \
   -v "$HERE/rootfs":/rootfs-src:ro \
   -v "$HERE/src":/src:ro \
+  -v "$REPO_ROOT/src":/baseos-src:ro \
+  -v "$REPO_ROOT/assets":/baseos-assets:ro \
   -e KREL="$KREL" \
   alpine:3.22 sh -euc '
-    apk add --no-cache busybox-static tar zstd build-base linux-headers sdl2-dev
+    apk add --no-cache busybox-static tar zstd build-base linux-headers sdl2-dev freetype-dev
 
     R=/work/rootfs
     rm -rf "$R"
@@ -79,10 +81,22 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     cp -a /etc/apk/keys/. "$R/etc/apk/keys/"
     cp /etc/apk/repositories "$R/etc/apk/repositories"
     apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add \
-      v4l-utils evtest alsa-utils iw libzip libgcc \
+      v4l-utils evtest alsa-utils iw libzip libgcc freetype \
       mesa-egl mesa-gles mesa-gbm mesa-dri-gallium \
       libdrm-tests mesa-utils kmscube sdl2 \
       sgdisk partx blkid wipefs exfatprogs
+
+    # Keep a default logo in the immutable rootfs as a fallback; the copy on
+    # BASEOS_BOOT can be replaced by the user through NextUI's Bootlogo.pak.
+    mkdir -p "$R/usr/share/baseos"
+    cp /baseos-assets/bootlogo.bmp "$R/usr/share/baseos/bootlogo.bmp"
+    cp /baseos-assets/boot.ttf "$R/usr/share/baseos/boot.ttf"
+    gcc -std=c11 -O2 -Wall -Wextra \
+      $(pkg-config --cflags freetype2) \
+      -o "$R/usr/bin/fbsplash" /baseos-src/fbsplash.c \
+      $(pkg-config --libs freetype2)
+    gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
+      -o "$R/usr/sbin/baseos-bootlogo" /src/rg353ps-bootlogo.c
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
       -o "$R/usr/sbin/rg353ps-control-center" /src/rg353ps-control-center.c
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
@@ -108,6 +122,14 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     }
     test -x "$R/usr/sbin/rg353ps-startup-prompt" || {
       echo "first-boot storage prompt was not built" >&2
+      exit 1
+    }
+    test -x "$R/usr/sbin/baseos-bootlogo" || {
+      echo "framebuffer bootlogo renderer was not built" >&2
+      exit 1
+    }
+    test -x "$R/usr/bin/fbsplash" || {
+      echo "boot status renderer was not built" >&2
       exit 1
     }
 
@@ -138,6 +160,9 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     chmod 0755 "$R/etc/init.d/rcS"
     chmod 0755 "$R/usr/sbin/baseos-mount-storage"
     chmod 0755 "$R/usr/sbin/baseos-init-userdata"
+    chmod 0755 "$R/usr/bin/baseos-splash"
+    chmod 0755 "$R/usr/bin/fbsplash"
+    chmod 0755 "$R/usr/sbin/baseos-bootlogo"
     chmod 0755 "$R/usr/sbin/baseos-frontend-session"
     chmod 0755 "$R/usr/sbin/baseos-slot-launcher"
     chmod 0755 "$R/usr/sbin/rg353ps-hotkeyd"
@@ -172,7 +197,7 @@ EOF
     echo "rootfs prepared at $R"
   '
 
-for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/baseos-mount-storage" "$ROOTFS/usr/sbin/baseos-init-userdata" "$ROOTFS/usr/sbin/baseos-frontend-session" "$ROOTFS/usr/sbin/baseos-slot-launcher" "$ROOTFS/usr/sbin/rg353ps-hotkeyd" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-graphics-stack-test" "$ROOTFS/usr/sbin/rg353ps-sdl2-test" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/usr/sbin/rg353ps-startup-prompt" "$ROOTFS/etc/baseos.conf" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
+for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/baseos-mount-storage" "$ROOTFS/usr/sbin/baseos-init-userdata" "$ROOTFS/usr/bin/baseos-splash" "$ROOTFS/usr/bin/fbsplash" "$ROOTFS/usr/sbin/baseos-bootlogo" "$ROOTFS/usr/sbin/baseos-frontend-session" "$ROOTFS/usr/sbin/baseos-slot-launcher" "$ROOTFS/usr/sbin/rg353ps-hotkeyd" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-graphics-stack-test" "$ROOTFS/usr/sbin/rg353ps-sdl2-test" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/usr/sbin/rg353ps-startup-prompt" "$ROOTFS/etc/baseos.conf" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
   [ -e "$file" ] || { echo "rootfs missing required file: $file" >&2; exit 1; }
 done
 
