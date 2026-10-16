@@ -86,8 +86,19 @@ find_partition_number() {
 
 mkdir -p "$USERDATA"
 
-# If this partition is already mounted by an earlier init hook, leave it alone.
+# If already mounted, do not touch the partition table; ensure the first-boot
+# marker is present so the startup gate can distinguish success from failure.
 if is_mounted "$USERDATA"; then
+  if [ ! -e "$MARKER" ]; then
+    MOUNTED_SOURCE=$(awk '$2 == "/mnt/SDCARD" { print $1; exit }' /proc/mounts)
+    MOUNTED_TYPE=$(awk '$2 == "/mnt/SDCARD" { print $3; exit }' /proc/mounts)
+    if printf 'version=1\npartition=%s\nfilesystem=%s\n' "$MOUNTED_SOURCE" "$MOUNTED_TYPE" > "$MARKER"; then
+      sync
+    else
+      log "user data is mounted but could not persist the initialization marker"
+      exit 1
+    fi
+  fi
   log "$USERDATA already mounted"
   exit 0
 fi
