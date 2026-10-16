@@ -8,7 +8,7 @@ Install frontend ZIP contents at the root of the card you want to use. TF2 has p
 
 Automatic discovery recognizes `nextui`, `slot`, and `custom` adapters in the order listed by `frontends_order` (default: `nextui,slot,custom`). The old `frontend=...` and `allow_external_frontend_adapters=...` settings are ignored by the automatic selector; no manual opt-in is needed. Adapter scripts are executed with root privileges, so only use frontend packages you trust.
 
-The intended system-card layout is `BASEOS_BOOT` (FAT boot files), `BASEOS_ROOT` (fixed-size Linux system partition), and `BASEOS_DATA` (exFAT user space). The first-boot initializer expands a blank `BASEOS_DATA` partition to the end of the physical card, formats it as exFAT and mounts it at `/mnt/SDCARD`. On cards larger than the 2 GiB image, the user partition is extended to use the rest of the card. If no free space exists, the initializer logs a warning rather than shrinking the root partition.
+The intended system-card layout is `BASEOS_BOOT` (FAT boot files), `BASEOS_ROOT` (fixed-size Linux system partition), and `BASEOS_DATA` (exFAT user space). The first-boot initializer expands a blank `BASEOS_DATA` partition to the end of the physical card, formats it as exFAT and mounts it at `/mnt/SDCARD`. On cards larger than the 2 GiB image, the user partition is extended to use the rest of the card. If no free space exists, the initializer logs a warning rather than shrinking the root partition. Before tty1 starts either a frontend or the diagnostic UI, BaseOS waits until this user area is mounted and the persistent initialization marker is written. If initialization fails, a full-screen recovery prompt blocks normal UI startup and lets the user retry. After the first successful initialization, a full-screen confirmation asks for A/Enter once before automatic frontend discovery continues; the acknowledgement is persisted on `BASEOS_BOOT`.
 
 The adapter environment includes `PLATFORM=rg353ps` and `BASEOS_BOOT=/mnt/boot`. `BASEOS_FRONTEND_ROOT` points to the selected card root (`/mnt/TF2` or `/mnt/SDCARD`); `BASEOS_DATA_DIR` and `BASEOS_USERDATA_DIR` are created under that selected root.
 
@@ -50,7 +50,7 @@ When a successful `baseos-rg353ps-slot` workflow artifact is available, back up 
 
 To install Slot on TF2, extract the ZIP contents directly into the root of the TF2 card (not into a containing folder, and not onto `BASEOS_BOOT`). To install it on TF1 instead, extract the same contents into the root of the `BASEOS_DATA` partition. No `baseos.conf` edits are required: BaseOS automatically chooses a usable frontend on TF2 first, then falls back to TF1 user data.
 
-Keep the original system card and your saves backed up while testing. Because the frontend adapter is a shell script executed with root privileges, only install packages you trust.
+Keep the original system card and your saves backed up while testing. Because the frontend adapter is a shell script executed with root privileges, only install packages you trust. exFAT/Windows extraction may not preserve Unix executable permissions, so the Slot adapter only checks that `System/slot` exists and copies it to writable `/tmp` before execution.
 
 This first target is intentionally a limited milestone: successful compilation
 or menu launch does not establish correctness of all buttons, sound, battery,
