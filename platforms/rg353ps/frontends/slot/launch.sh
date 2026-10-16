@@ -17,16 +17,29 @@ export SDL_JOYSTICK_DISABLE_UDEV=1
 export SDL_HIDAPI_JOYSTICK_DISABLE_UDEV=1
 export LD_LIBRARY_PATH="$SYSTEM/lib:$SYSTEM:/usr/lib:/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-if [ ! -x "$SYSTEM/slot" ]; then
+if [ ! -f "$SYSTEM/slot" ]; then
   echo "Slot binary missing: $SYSTEM/slot" >> "$LOGDIR/slot.log"
   exit 127
 fi
 
+# Windows/exFAT user partitions may not preserve Unix executable bits and
+# do not provide a POSIX chmod model. Stage the launcher binary onto writable
+# tmpfs before executing it; ROMs, saves and cores stay on the user partition.
+RUNTIME_SLOT="/tmp/baseos-slot"
+if ! cp "$SYSTEM/slot" "$RUNTIME_SLOT"; then
+  echo "Could not stage Slot binary to $RUNTIME_SLOT" >> "$LOGDIR/slot.log"
+  exit 126
+fi
+chmod 0755 "$RUNTIME_SLOT" || {
+  echo "Could not make staged Slot binary executable" >> "$LOGDIR/slot.log"
+  exit 126
+}
+
 # Create missing content directories and migrate only Slot's own config if needed.
-"$SYSTEM/slot" --init-root "$SDCARD" >> "$LOGDIR/slot-session.log" 2>&1 || {
+"$RUNTIME_SLOT" --init-root "$SDCARD" >> "$LOGDIR/slot-session.log" 2>&1 || {
   echo "Slot root initialization failed at $(date)" >> "$LOGDIR/slot-session.log"
   exit 1
 }
 
 echo "BaseOS RG353PS Slot launch: $(date)" >> "$LOGDIR/slot-session.log"
-exec "$SYSTEM/slot" >> "$LOGDIR/slot.log" 2>&1
+exec "$RUNTIME_SLOT" >> "$LOGDIR/slot.log" 2>&1
