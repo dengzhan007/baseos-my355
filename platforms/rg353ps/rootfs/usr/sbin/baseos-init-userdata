@@ -11,7 +11,13 @@ USERDATA=/mnt/SDCARD
 MARKER="$BOOT/.baseos-userdata-v1"
 
 log() {
-  printf 'baseos-userdata: %s\n' "$*" > /dev/kmsg 2>/dev/null || :
+  log_message="baseos-userdata: $*"
+  printf '%s\n' "$log_message" > /dev/kmsg 2>/dev/null || :
+  if grep -q " $BOOT " /proc/mounts; then
+    printf '%s\n' "$log_message" >> "$BOOT/baseos-userdata-init.txt" 2>/dev/null || :
+  else
+    printf '%s\n' "$log_message" >> /tmp/baseos-userdata-init.txt 2>/dev/null || :
+  fi
 }
 
 is_mounted() {
@@ -24,6 +30,7 @@ if ! is_mounted "$BOOT"; then
   log "$BOOT is not mounted; refusing to partition or format user storage"
   exit 0
 fi
+log "--- user-storage initialization attempt ---"
 
 # Resolve a block partition's parent disk name for the RG353PS (mmcblkXpN).
 parent_disk_name() {
