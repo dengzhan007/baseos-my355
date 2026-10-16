@@ -105,16 +105,16 @@ if [ -e "$MARKER" ] && ! is_mounted "$USERDATA"; then
   RECORDED_FS=
   while IFS= read -r marker_line || [ -n "$marker_line" ]; do
     case "$marker_line" in
-      partition=*) RECORDED_DEV=\${marker_line#partition=} ;;
-      filesystem=*) RECORDED_FS=\${marker_line#filesystem=} ;;
+      partition=*) RECORDED_DEV=${marker_line#partition=} ;;
+      filesystem=*) RECORDED_FS=${marker_line#filesystem=} ;;
     esac
   done < "$MARKER"
 
   case "$RECORDED_FS" in exfat|vfat) ;; *) RECORDED_FS= ;; esac
   case "$RECORDED_DEV" in /dev/mmcblk*p[0-9]*) ;; *) RECORDED_DEV= ;; esac
   BOOT_SOURCE=$(awk '$2 == "/mnt/boot" { print $1; exit }' /proc/mounts)
-  BOOT_NAME=\${BOOT_SOURCE#/dev/}
-  DATA_NAME=\${RECORDED_DEV#/dev/}
+  BOOT_NAME=${BOOT_SOURCE#/dev/}
+  DATA_NAME=${RECORDED_DEV#/dev/}
   BOOT_PARENT=$(parent_disk_name "$BOOT_NAME" 2>/dev/null || :)
   DATA_PARENT=$(parent_disk_name "$DATA_NAME" 2>/dev/null || :)
   RECORDED_TYPE=$(blkid -p -s TYPE -o value "$RECORDED_DEV" 2>/dev/null || :)
