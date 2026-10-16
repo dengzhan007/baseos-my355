@@ -79,7 +79,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     cp -a /etc/apk/keys/. "$R/etc/apk/keys/"
     cp /etc/apk/repositories "$R/etc/apk/repositories"
     apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add \
-      v4l-utils evtest alsa-utils iw libzip \
+      v4l-utils evtest alsa-utils iw libzip libgcc \
       mesa-egl mesa-gles mesa-gbm mesa-dri-gallium \
       libdrm-tests mesa-utils kmscube sdl2 \
       sgdisk partx blkid wipefs exfatprogs
