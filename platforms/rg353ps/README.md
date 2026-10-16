@@ -15,22 +15,33 @@ latest successful build before the current JPEG test-helper addition is
 The image has been booted on physical RG353PS hardware. The submitted hardware
 report shows `/dev/video0` (Hantro stateless decoder) and `/dev/video1`
 (Hantro JPEG encoder) both pass `v4l2-compliance 1.28.1` with 48/48 tests,
-96/96 combined. A one-frame YM12-to-JPEG encode also succeeded on the device:
-`v4l2-ctl` produced a 678-byte bitstream with JPEG SOI/EOI markers. Remaining
-hardware work is the wider display, controls, audio, battery, networking,
-wireless, storage, suspend and shutdown validation.
+96/96 combined. A one-frame YM12-to-JPEG encode also succeeded. Physical testing
+has additionally confirmed controller navigation, RK817 playback volume changes
+and clean shutdown on a 2-second power-key hold. Remaining work includes actual
+audio playback, Wi-Fi/BT association and audio, battery/charging accuracy, HDMI,
+3D graphics, suspend/resume, storage endurance and long-duration stability.
 
-**This is still a bring-up image, not the finished BaseOS port.** It launches
-a minimal evdev-driven text diagnostic menu on the handheld display rather than
-a game frontend. The D-pad and vertically corrected left stick move the menu;
-Nintendo A (right / BTN_EAST) confirms and B (bottom / BTN_SOUTH) returns.
-Volume +/- adjusts RK817 Master Playback Volume by 5%. A short power-button
-press opens system status; holding Power for 2 seconds requests a clean
-shutdown. Function toggles the live input monitor. It does not yet include
-BaseOS's read-only root design, A/B updater, release packaging, or finished
-user-facing service integration. Treat it as experimental and use a
-spare TF card. The file `work/rg353ps/rg353ps-uboot.bin` remains an
-intermediate bootloader region, not a standalone SD-card image.
+**This remains an experimental bring-up image, not a finished BaseOS release.**
+The built-in diagnostic UI remains the default. The rootfs now contains a
+global hotkey service for RK817 playback-only volume changes and clean shutdown
+after a 2-second power hold, plus a configurable frontend-session manager.
+Edit `baseos.conf` on the FAT `BASEOS_BOOT` partition and select
+`frontend=diagnostic`, `auto`, `nextui`, `slot` or `custom`. Adapters are
+looked up under `/mnt/SDCARD/.baseos/frontends/<name>/launch.sh`; the second
+card defaults to `/dev/mmcblk2p1`, configurable through `frontend_device`
+and `frontend_fstype`. External adapters are disabled by default and require
+`allow_external_frontend_adapters=yes`. Missing or exiting frontends fall back
+to diagnostics.
+
+This is a selection/adapter framework, not a claim that NextUI or Slot already
+run on RK3566. Their binary ABI/libraries, video backend, audio stack, controller
+mapping and emulator payloads still need device-specific compatibility work.
+The image also lacks the final read-only root, dedicated persistent system-data
+partition, A/B updater and release packaging. Use a spare TF card. The file
+`work/rg353ps/rg353ps-uboot.bin` remains an intermediate bootloader region,
+not a standalone SD-card image.
+
+For details, see [FRONTENDS.md](FRONTENDS.md).
 
 ## Build the U-Boot milestone
 
