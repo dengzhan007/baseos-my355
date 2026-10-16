@@ -10,7 +10,15 @@ TF2=/mnt/TF2
 CONFIG=/mnt/boot/baseos.conf
 [ -r "$CONFIG" ] || CONFIG=/etc/baseos.conf
 
-log() { printf 'baseos-frontend: %s\n' "$*" > /dev/kmsg 2>/dev/null || :; }
+# Keep a human-readable report on the FAT boot partition so frontend
+# discovery failures can be inspected from a PC without a serial console.
+DETECTION_LOG=/mnt/boot/baseos-frontend-detection.txt
+: > "$DETECTION_LOG" 2>/dev/null || DETECTION_LOG=/tmp/baseos-frontend-detection.txt
+log() {
+  log_message="baseos-frontend: $*"
+  printf '%s\n' "$log_message" > /dev/kmsg 2>/dev/null || :
+  printf '%s\n' "$log_message" >> "$DETECTION_LOG" 2>/dev/null || :
+}
 is_mounted() { grep -q " $1 " /proc/mounts; }
 
 setting() {
