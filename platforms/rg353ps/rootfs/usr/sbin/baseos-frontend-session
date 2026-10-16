@@ -174,37 +174,21 @@ if [ "$(setting force_diagnostic no)" = "yes" ]; then
   diagnostic
 fi
 
-FRONTENDS_ORDER=$(setting frontends_order nextui,slot,custom)
-[ -n "$FRONTENDS_ORDER" ] || FRONTENDS_ORDER=nextui,slot,custom
+FRONTENDS_ORDER=$(setting frontends_order nextui,custom)
+[ -n "$FRONTENDS_ORDER" ] || FRONTENDS_ORDER=nextui,custom
 
 resolve_adapter() {
   adapter_root=$1
   profile_name=$2
-  case "$profile_name" in
-    nextui|slot|custom) ;;
-    *) return 1 ;;
-  esac
+  [ -n "$profile_name" ] || return 1
+  case "$profile_name" in *[!a-zA-Z0-9_-]*) return 1 ;; esac
 
-  # The canonical path is hidden by convention, but offer a visible alias too:
-  # some extraction tools omit dot-prefixed directories from selected views.
+  # Every frontend owns its launcher. BaseOS only discovers a standard path;
+  # it neither embeds nor dispatches frontend-specific binaries.
   adapter="$adapter_root/.baseos/frontends/$profile_name/launch.sh"
   [ -f "$adapter" ] || adapter="$adapter_root/baseos/frontends/$profile_name/launch.sh"
-
   if [ -f "$adapter" ]; then
-    if [ "$profile_name" = "slot" ] && [ ! -f "$adapter_root/System/slot" ]; then
-      log "found Slot adapter at $adapter_root but System/slot is missing"
-      return 1
-    fi
     printf '%s' "$adapter"
-    return 0
-  fi
-
-  # A Slot ZIP may have been extracted by a tool that skipped the dot-folder,
-  # even though System/slot is present. Use the OS-bundled launcher in that
-  # case, so the package does not silently fall through to diagnostics.
-  if [ "$profile_name" = "slot" ] && [ -f "$adapter_root/System/slot" ]; then
-    log "Slot binary found at $adapter_root/System/slot but adapter file is absent; using built-in launcher"
-    printf '%s' "/usr/sbin/baseos-slot-launcher"
     return 0
   fi
 
@@ -226,7 +210,7 @@ scan_root() {
   old_ifs=$IFS
   IFS=,
   for profile in $FRONTENDS_ORDER; do
-    case "$profile" in nextui|slot|custom) ;; *) continue ;; esac
+    case "$profile" in *[!a-zA-Z0-9_-]*) continue ;; esac
     candidate=$(resolve_adapter "$scan_root_dir" "$profile") || {
       # Support archives extracted into one wrapper directory by common GUI tools.
       for nested_root in "$scan_root_dir"/*; do
@@ -248,7 +232,21 @@ scan_root() {
     return 0
   done
   IFS=$old_ifs
-  log "no supported frontend found at or one directory below $scan_root_dir"
+
+  # Fall back to discovery of any adapter ID, so a separately maintained
+  # frontend can be installed without modifying the BaseOS repository.
+  for adapter in "$scan_root_dir"/.baseos/frontends/*/launch.sh "$scan_root_dir"/baseos/frontends/*/launch.sh; do
+    [ -f "$adapter" ] || continue
+    profile=$(basename "$(dirname "$adapter")")
+    case "$profile" in *[!a-zA-Z0-9_-]*) continue ;; esac
+    SELECTED=$profile
+    LAUNCHER=$adapter
+    FRONTEND_ROOT=$scan_root_dir
+    log "auto-discovered frontend '$profile' at $adapter"
+    return 0
+  done
+
+  log "no frontend adapter found at or one directory below $scan_root_dir"
   return 1
 }
 
@@ -271,7 +269,7 @@ if [ -z "$LAUNCHER" ] && is_mounted "$TF1"; then
 fi
 if [ -z "$LAUNCHER" ]; then
   log "no usable frontend found on TF2 or TF1; falling back to diagnostics"
-  log "inspect $DETECTION_LOG; expected Slot files are System/slot and .baseos/frontends/slot/launch.sh"
+  log "inspect $DETECTION_LOG; install a frontend bundle containing .baseos/frontends/<id>/launch.sh"
   diagnostic
 fi
 
