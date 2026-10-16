@@ -7,7 +7,6 @@ on:
       - "platforms/rg353ps/**"
       - "tools/common.sh"
       - ".github/workflows/rg353ps-uboot.yml"
-  workflow_dispatch:
 
 permissions:
   contents: read
