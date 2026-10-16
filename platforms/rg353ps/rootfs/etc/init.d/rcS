@@ -12,6 +12,7 @@ mount -t tmpfs -o mode=0755 tmpfs /run 2>/dev/null || :
 mount -t tmpfs -o mode=1777 tmpfs /tmp 2>/dev/null || :
 echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null || :
 /sbin/mdev -s 2>/dev/null || :
+/usr/sbin/baseos-mount-storage
 
 say() {
   echo "$*" > /dev/kmsg 2>/dev/null || :
@@ -52,8 +53,12 @@ if [ -x /sbin/modprobe ]; then
   fi
 fi
 
+# Global hotkeys must work regardless of which UI is selected.
+/usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
+echo $! > /run/rg353ps-hotkeyd.pid
+
 say "BaseOS userspace is up."
-say "The tty1 interactive control test starts next; this is not the finished game frontend."
+say "The tty1 frontend-session manager starts next; diagnostics remain the fallback."
 
 # Keep later driver notices in the kernel ring buffer without overwriting the
 # diagnostic console. The full log remains available through `dmesg`.
