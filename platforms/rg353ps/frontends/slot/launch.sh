@@ -15,7 +15,7 @@ export SDL_VIDEODRIVER=kmsdrm
 export SDL_AUDIODRIVER=alsa
 export SDL_JOYSTICK_DISABLE_UDEV=1
 export SDL_HIDAPI_JOYSTICK_DISABLE_UDEV=1
-export LD_LIBRARY_PATH="/usr/lib:/lib:$SYSTEM${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$SYSTEM/lib:$SYSTEM:/usr/lib:/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 if [ ! -x "$SYSTEM/slot" ]; then
   echo "Slot binary missing: $SYSTEM/slot" >> "$LOGDIR/slot.log"
