@@ -14,6 +14,7 @@ ROOTFS="$WORK/rootfs"
 UBOOT="$WORK/rg353ps-uboot.bin"
 OUTPUT="$WORK/baseos-rg353ps-smoke.img"
 BOOT_MIB=256
+ROOT_MIB=1280
 TOTAL_SIZE=2G
 ROOT_PARTUUID="d462d29a-c5ca-4a4f-90c1-8d9423dd3535"
 
@@ -33,6 +34,7 @@ echo "== assembling RG353PS smoke-test image =="
 docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
   -v "$WORK":/work \
   -e BOOT_MIB="$BOOT_MIB" \
+  -e ROOT_MIB="$ROOT_MIB" \
   -e TOTAL_SIZE="$TOTAL_SIZE" \
   -e ROOT_PARTUUID="$ROOT_PARTUUID" \
   debian:bookworm-slim sh -euc '
@@ -56,9 +58,12 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
       exit 1
     }
 
+    # Keep the root filesystem bounded; partition 3 is the user area and
+    # stays blank in the image so first boot can extend it to the physical TF card.
     sgdisk --clear \
       --new=1:32768:+${BOOT_MIB}M --typecode=1:0700 --change-name=1:BASEOS_BOOT \
-      --new=2:0:0 --typecode=2:8300 --change-name=2:BASEOS_ROOT \
+      --new=2:0:+${ROOT_MIB}M --typecode=2:8300 --change-name=2:BASEOS_ROOT \
+      --new=3:0:0 --typecode=3:0700 --change-name=3:BASEOS_DATA \
       --partition-guid=2:"$ROOT_PARTUUID" "$IMG"
 
     partition_value() {
@@ -68,7 +73,9 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
     BOOT_END="$(partition_value 1 "Last sector")"
     ROOT_START="$(partition_value 2 "First sector")"
     ROOT_END="$(partition_value 2 "Last sector")"
-    [ -n "$BOOT_START" ] && [ -n "$ROOT_START" ] || {
+    DATA_START="$(partition_value 3 "First sector")"
+    DATA_END="$(partition_value 3 "Last sector")"
+    [ -n "$BOOT_START" ] && [ -n "$ROOT_START" ] && [ -n "$DATA_START" ] || {
       echo "unable to read partition boundaries from sgdisk" >&2
       exit 1
     }
@@ -93,8 +100,8 @@ LABEL BaseOS-RG353PS
 EOF
     mcopy -i "$BOOTFS" /tmp/extlinux.conf ::/extlinux/extlinux.conf
 
-    # Create ext4 directly from the staged root directory; no loop device or
-    # mount is required, and the filesystem fills its GPT partition exactly.
+    # Create ext4 directly from the staged root directory; partition 2 has a
+    # fixed size so the remaining partition can be used for persistent userdata.
     truncate -s "$ROOT_BYTES" "$ROOTFS_IMG"
     mkfs.ext4 -F -L BASEOS_ROOT -d /work/rootfs "$ROOTFS_IMG"
 
@@ -119,6 +126,10 @@ EOF
   "boot_partition_start_lba": "$BOOT_START",
   "root_partition_start_lba": "$ROOT_START",
   "root_partition_guid": "$ROOT_PARTUUID",
+  "user_data_partition_number": 3,
+  "user_data_partition_start_lba": "$DATA_START",
+  "user_data_partition_initial_end_lba": "$DATA_END",
+  "user_data_filesystem": "exFAT, initialized and expanded on first boot",
   "purpose": "first-boot hardware bring-up",
   "finished_frontend": false,
   "hardware_tested": false
