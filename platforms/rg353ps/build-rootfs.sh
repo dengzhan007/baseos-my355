@@ -119,6 +119,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     chmod 0755 "$R/usr/sbin/rg353ps-v4l2-report"
     chmod 0755 "$R/usr/sbin/rg353ps-jpeg-encode-test"
     chmod 0755 "$R/usr/sbin/rg353ps-hardware-audit"
+    chmod 0755 "$R/usr/sbin/rg353ps-graphics-stack-test"
     chmod 0755 "$R/usr/sbin/rg353ps-control-center"
     chmod 1777 "$R/tmp"
     mkdir -p "$R/mnt/SDCARD" "$R/run" "$R/root" "$R/var/empty"
