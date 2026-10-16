@@ -43,6 +43,36 @@ not a standalone SD-card image.
 
 For details, see [FRONTENDS.md](FRONTENDS.md).
 
+## Graphics userspace and first render test
+
+The physical RG353PS graphics audit identified a working Rockchip DRM display
+controller and a loaded Panfrost Mali-G52 kernel driver, but the earlier image
+did not contain EGL/GLES/GBM userspace libraries or tools. The rootfs build now
+installs Mesa EGL/GLES/GBM, the Panfrost DRI driver, SDL2 runtime, `eglinfo`,
+`modetest`, and `kmscube`. This is a first graphics-stack test environment,
+not yet proof of hardware-accelerated rendering or frontend compatibility.
+
+On the device, run:
+
+```sh
+/usr/sbin/rg353ps-graphics-stack-test
+```
+
+The test writes `/mnt/boot/rg353ps-graphics-stack-test.txt` (or
+`/tmp/rg353ps-graphics-stack-test.txt` if the boot partition is not writable).
+It enumerates DRM connectors, captures EGL information, and runs `kmscube` on
+`/dev/dri/card0` for a maximum of 12 seconds. The built-in display should show
+a spinning cube. Exit code 124 from the timed cube command is expected if the
+process ran until the timeout; an earlier EGL/DRM error is a failure to
+investigate. Run it from the serial shell when no other application owns the
+DRM display; it temporarily modesets the built-in screen.
+
+A passing KMS/EGL/GLES test still does not verify SDL's video backend, audio,
+or the NextUI/Slot runtime. Those are the next separate validation steps. The
+October 2026 report also showed the device clock about 10 days ahead of the
+current date; check `date -u` and fix time synchronization before diagnosing
+TLS/download errors.
+
 ## Build the U-Boot milestone
 
 Host prerequisites: Docker, Git, curl, and the host's usual shell utilities.
