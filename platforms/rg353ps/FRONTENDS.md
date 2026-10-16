@@ -1,26 +1,14 @@
 # RG353PS frontends
 
-The diagnostic UI is the safe default and fallback. The frontend selector
-is configured in `baseos.conf` on `BASEOS_BOOT`. Profiles are `diagnostic`,
-`auto`, `nextui`, `slot`, and `custom`.
+Normal boot does not require editing `baseos.conf` to select a frontend. BaseOS probes the second TF card (TF2) first, normally `/dev/mmcblk2p1`, and mounts it at `/mnt/TF2`. It scans the card root for a usable adapter at `.baseos/frontends/<name>/launch.sh`; if one is present, TF2 wins.
 
-The intended layout is now three partitions on the same TF card:
-`BASEOS_BOOT` (FAT boot files and `baseos.conf`), `BASEOS_ROOT` (bounded
-Linux system partition), and `BASEOS_DATA` (exFAT user space). On first boot,
-the new initializer expands `BASEOS_DATA` to the end of the physical card if
-it is blank, formats it, and mounts it at `/mnt/SDCARD`. Frontend adapters,
-`System/`, ROMs and saves belong on this user-data partition—not on the boot
-partition. On cards larger than the 2 GiB image, the user partition is extended
-to use the rest of the card. If the card has no free space for a user partition,
-the initializer logs a warning and does not shrink or rewrite the mounted root
-filesystem.
+If TF2 is absent, cannot be mounted, or has no usable frontend adapter, BaseOS scans the first/system TF card's `BASEOS_DATA` user partition at `/mnt/SDCARD`. If neither card provides a usable frontend, the built-in diagnostic UI starts. The compatibility path `/mnt/sdcard` follows whichever card supplied the selected frontend.
 
-Adapters are expected under `/mnt/SDCARD/.baseos/frontends/<name>/launch.sh`.
-External adapters run with root privileges, so execution is disabled by default.
-After installing an adapter you trust, set both `frontend=slot` (or `auto`)
-and `allow_external_frontend_adapters=yes` in `baseos.conf`. The configured
-second-card device remains only as a fallback for legacy/external storage.
+Install frontend ZIP contents at the root of the card you want to use. TF2 has priority whenever it contains a usable frontend, so a frontend installed on TF1 will only be selected when TF2 is absent or has no usable adapter. Do not place frontend payloads on `BASEOS_BOOT`; that small FAT partition is for boot files and maintenance.
 
+Automatic discovery recognizes `nextui`, `slot`, and `custom` adapters in the order listed by `frontends_order` (default: `nextui,slot,custom`). The old `frontend=...` and `allow_external_frontend_adapters=...` settings are ignored by the automatic selector; no manual opt-in is needed. Adapter scripts are executed with root privileges, so only use frontend packages you trust.
+
+The intended system-card layout is `BASEOS_BOOT` (FAT boot files), `BASEOS_ROOT` (fixed-size Linux system partition), and `BASEOS_DATA` (exFAT user space). The first-boot initializer expands a blank `BASEOS_DATA` partition to the end of the physical card, formats it as exFAT and mounts it at `/mnt/SDCARD`. On cards larger than the 2 GiB image, the user partition is extended to use the rest of the card. If no free space exists, the initializer logs a warning rather than shrinking the root partition.
 The adapter environment includes `PLATFORM=rg353ps`, `BASEOS_BOOT=/mnt/boot`,
 `BASEOS_FRONTEND_ROOT=/mnt/SDCARD`,
 `BASEOS_DATA_DIR=/mnt/SDCARD/.baseos/data`, and
