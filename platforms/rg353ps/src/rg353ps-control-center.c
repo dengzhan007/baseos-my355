@@ -17,7 +17,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <termios.h>
-#include <time.h>
 #include <unistd.h>
 
 #define MAX_INPUTS 64
@@ -47,7 +46,6 @@ static int joy_y_direction;
 static char last_event[160] = "Waiting for controller input...";
 static struct termios saved_termios;
 static int termios_saved;
-static long long power_press_start_ms = -1;
 
 static const char *menu_items[] = {
     "Controller / live input monitor",
@@ -58,14 +56,6 @@ static const char *menu_items[] = {
     "Linux command-line shell (root)"
 };
 #define MENU_COUNT ((int)(sizeof(menu_items) / sizeof(menu_items[0])))
-
-static long long monotonic_ms(void)
-{
-    struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
-        return 0;
-    return ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
-}
 
 static void stop_running(int sig)
 {
@@ -462,33 +452,6 @@ static void go_back(void)
     }
 }
 
-static int adjust_volume(int volume_up)
-{
-    pid_t child = fork();
-    int status;
-    if (child < 0)
-        return 0;
-    if (child == 0) {
-        int nullfd = open("/dev/null", O_WRONLY);
-        if (nullfd >= 0) {
-            (void)dup2(nullfd, STDOUT_FILENO);
-            (void)dup2(nullfd, STDERR_FILENO);
-            if (nullfd > STDERR_FILENO)
-                (void)close(nullfd);
-        }
-        execl("/usr/bin/amixer", "amixer", "-c", "1", "set",
-              "Master", "playback", volume_up ? "5%+" : "5%-", (char *)NULL);
-        execl("/usr/sbin/amixer", "amixer", "-c", "1", "set",
-              "Master", "playback", volume_up ? "5%+" : "5%-", (char *)NULL);
-        _exit(127);
-    }
-    while (waitpid(child, &status, 0) < 0) {
-        if (errno == EINTR) continue;
-        return 0;
-    }
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
-}
-
 static void handle_key_event(struct input_device *dev, const struct input_event *ev)
 {
     const char *name = key_name(ev->code);
@@ -518,25 +481,21 @@ static void handle_key_event(struct input_device *dev, const struct input_event 
     if (dev->role == ROLE_VOLUME) {
         if ((ev->value == 1 || ev->value == 2) &&
             (ev->code == KEY_VOLUMEUP || ev->code == KEY_VOLUMEDOWN)) {
-            int up = ev->code == KEY_VOLUMEUP;
-            int success = adjust_volume(up);
-            (void)snprintf(last_event, sizeof(last_event), "Volume %s: %s",
-                           up ? "UP" : "DOWN",
-                           success ? "RK817 master playback volume changed by 5%"
-                                   : "key detected; mixer adjustment failed");
+            (void)snprintf(last_event, sizeof(last_event),
+                           "Volume %s detected; global playback hotkey service handles mixer",
+                           ev->code == KEY_VOLUMEUP ? "UP" : "DOWN");
             render();
         }
         return;
     }
     if (dev->role == ROLE_POWER && ev->code == KEY_POWER) {
         if (ev->value == 1) {
-            power_press_start_ms = monotonic_ms();
             (void)snprintf(last_event, sizeof(last_event),
-                           "POWER pressed: short tap shows system status; hold 2s to shut down");
+                           "POWER pressed: short tap shows status; global service handles 2s hold");
             current_screen = SCREEN_SYSTEM;
         } else if (ev->value == 0) {
-            power_press_start_ms = -1;
-            (void)snprintf(last_event, sizeof(last_event), "POWER released before long-press shutdown");
+            (void)snprintf(last_event, sizeof(last_event),
+                           "POWER released; global service handles long-press shutdown");
         }
         if (ev->value == 0 || ev->value == 1) render();
         return;
@@ -674,27 +633,10 @@ int main(void)
             ++nfds;
         }
 
-        {
-            int timeout = nfds == 0 ? 1000 : -1;
-            if (power_press_start_ms >= 0) {
-                long long left = 2000 - (monotonic_ms() - power_press_start_ms);
-                timeout = left > 0 ? (int)left : 0;
-            }
-            rc = poll(pollfds, (nfds_t)nfds, timeout);
-        }
+        rc = poll(pollfds, (nfds_t)nfds, nfds == 0 ? 1000 : -1);
         if (rc < 0) {
             if (errno == EINTR) continue;
             break;
-        }
-        if (power_press_start_ms >= 0 &&
-            monotonic_ms() - power_press_start_ms >= 2000) {
-            power_press_start_ms = -1;
-            sync();
-            execl("/sbin/poweroff", "poweroff", (char *)NULL);
-            (void)snprintf(last_event, sizeof(last_event),
-                           "Clean shutdown command failed; inspect /sbin/poweroff");
-            current_screen = SCREEN_SYSTEM;
-            render();
         }
         if (rc == 0) continue;
 
