@@ -81,6 +81,12 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add v4l-utils evtest alsa-utils iw
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
       -o "$R/usr/sbin/rg353ps-control-center" /src/rg353ps-control-center.c
+    gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
+      -o "$R/usr/sbin/rg353ps-hotkeyd" /src/rg353ps-hotkeyd.c
+    test -x "$R/usr/sbin/rg353ps-hotkeyd" || {
+      echo "global hotkey service was not built" >&2
+      exit 1
+    }
     test -x "$R/usr/sbin/rg353ps-control-center" || {
       echo "interactive control UI was not built" >&2
       exit 1
@@ -104,12 +110,16 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     }
 
     chmod 0755 "$R/etc/init.d/rcS"
+    chmod 0755 "$R/usr/sbin/baseos-mount-storage"
+    chmod 0755 "$R/usr/sbin/baseos-frontend-session"
+    chmod 0755 "$R/usr/sbin/rg353ps-hotkeyd"
     chmod 0755 "$R/usr/sbin/rg353ps-v4l2-report"
     chmod 0755 "$R/usr/sbin/rg353ps-jpeg-encode-test"
     chmod 0755 "$R/usr/sbin/rg353ps-hardware-audit"
     chmod 0755 "$R/usr/sbin/rg353ps-control-center"
     chmod 1777 "$R/tmp"
-    mkdir -p "$R/run" "$R/root" "$R/var/empty"
+    mkdir -p "$R/mnt/SDCARD" "$R/run" "$R/root" "$R/var/empty"
+    ln -sfn /mnt/SDCARD "$R/mnt/sdcard"
     printf "root:x:0:0:root:/root:/bin/sh\n" > "$R/etc/passwd"
     printf "root:x:0:\n" > "$R/etc/group"
     printf "root:*:19000:0:99999:7:::\n" > "$R/etc/shadow"
@@ -131,7 +141,7 @@ EOF
     echo "rootfs prepared at $R"
   '
 
-for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
+for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/baseos-mount-storage" "$ROOTFS/usr/sbin/baseos-frontend-session" "$ROOTFS/usr/sbin/rg353ps-hotkeyd" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/etc/baseos.conf" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
   [ -e "$file" ] || { echo "rootfs missing required file: $file" >&2; exit 1; }
 done
 
