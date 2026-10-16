@@ -87,7 +87,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
       sgdisk partx blkid wipefs exfatprogs
 
     # Keep a default logo in the immutable rootfs as a fallback; the copy on
-    # BASEOS_BOOT can be replaced by the user through NextUI's Bootlogo.pak.
+    # BASEOS_BOOT can be replaced by the user through the NextUI Bootlogo.pak.
     mkdir -p "$R/usr/share/baseos"
     cp /baseos-assets/bootlogo.bmp "$R/usr/share/baseos/bootlogo.bmp"
     cp /baseos-assets/boot.ttf "$R/usr/share/baseos/boot.ttf"
