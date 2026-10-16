@@ -84,11 +84,20 @@ else
   echo "SKIP: kmscube is not installed"
 fi
 
-section "6. Kernel messages after the test"
+section "6. SDL2 KMSDRM + EGL/GLES window test"
+echo "A full-screen red/green/blue/black sequence should appear for about 8 seconds."
+if [ -x /usr/sbin/rg353ps-sdl2-test ] && command -v timeout >/dev/null 2>&1; then
+  run "SDL_VIDEODRIVER=kmsdrm timeout -s TERM 15 /usr/sbin/rg353ps-sdl2-test" \
+    env SDL_VIDEODRIVER=kmsdrm timeout -s TERM 15 /usr/sbin/rg353ps-sdl2-test
+else
+  echo "SKIP: SDL2 test binary or timeout utility is unavailable"
+fi
+
+section "7. Kernel messages after the test"
 dmesg 2>/dev/null | grep -Ei 'panfrost|drm|gpu|egl|iommu|fault|timeout' | tail -n 100 || true
 
 section "Result guidance"
 echo "A successful timeout-limited kmscube run should show a cube then exit 124."
 echo "An EGL error, DRM permission error, failure to find a connector, or GPU fault needs investigation."
-echo "This test does not prove SDL or any frontend is compatible."
+echo "A passing SDL2 test validates this SDL KMSDRM path, not full frontend compatibility."
 echo "End time: $(date)"
