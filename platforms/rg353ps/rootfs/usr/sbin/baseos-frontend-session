@@ -14,6 +14,11 @@ CONFIG=/mnt/boot/baseos.conf
 # discovery failures can be inspected from a PC without a serial console.
 DETECTION_LOG=/mnt/boot/baseos-frontend-detection.txt
 : > "$DETECTION_LOG" 2>/dev/null || DETECTION_LOG=/tmp/baseos-frontend-detection.txt
+# Keep launcher/compiler diagnostics off tty1; the boot logo stays visible until
+# the selected frontend takes over. Logs remain accessible from BASEOS_BOOT.
+FRONTEND_LOG=/mnt/boot/baseos-frontend.log
+: > "$FRONTEND_LOG" 2>/dev/null || FRONTEND_LOG=/tmp/baseos-frontend.log
+: > "$FRONTEND_LOG" 2>/dev/null || :
 log() {
   log_message="baseos-frontend: $*"
   printf '%s\n' "$log_message" > /dev/kmsg 2>/dev/null || :
@@ -285,7 +290,7 @@ export BASEOS_FRONTEND_ROOT BASEOS_DATA_DIR BASEOS_USERDATA_DIR BASEOS_LAUNCHER
 mkdir -p "$BASEOS_DATA_DIR" "$BASEOS_USERDATA_DIR" 2>/dev/null || :
 cd "$FRONTEND_ROOT" || diagnostic
 log "launching $SELECTED adapter: $LAUNCHER"
-/bin/sh "$LAUNCHER"
+/bin/sh "$LAUNCHER" >> "$FRONTEND_LOG" 2>&1
 rc=$?
 log "frontend '$SELECTED' exited with status $rc; returning to diagnostics"
 printf '\033[0m\033[?25h\033[2J\033[H' > /dev/tty1 2>/dev/null || :
