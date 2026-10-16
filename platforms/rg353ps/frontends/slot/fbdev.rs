@@ -284,7 +284,7 @@ impl Surface for FbdevSurface {
         }
         unsafe {
             self.gles
-                .get::<unsafe extern "C" fn()>(name.as_bytes())
+                .get::<unsafe extern "C" fn()>(c.as_bytes_with_nul())
                 .map(|f| *f as *const c_void)
                 .unwrap_or(std::ptr::null())
         }
