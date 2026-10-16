@@ -187,14 +187,21 @@ if ! find_partition BASEOS_DATA "$DISK_NAME"; then
       log "could not create BASEOS_DATA (card may be no larger than the old 2 GiB smoke image)"
       exit 0
     fi
-    partx -u -n 3 "$DISK" >/dev/null 2>&1 || :
+    if ! partx -u -n 3 "$DISK" >/dev/null 2>&1; then
+      log "partx could not refresh partition 3 after creating BASEOS_DATA"
+    fi
     /sbin/mdev -s 2>/dev/null || :
     sleep 1
-    find_partition BASEOS_DATA "$DISK_NAME" || {
-      log "BASEOS_DATA was added to GPT but its kernel device node did not appear; reboot and inspect"
-      exit 0
-    }
-    log "created $FOUND_DEV in free space"
+    if ! find_partition BASEOS_DATA "$DISK_NAME"; then
+      # PARTNAME in sysfs can lag behind GPT changes even when the kernel block
+      # device exists. Fall back to the expected mmcblkXp3 node before failing.
+      if ! find_partition_number 3 "$DISK_NAME"; then
+        log "BASEOS_DATA was added to GPT but /dev/${DISK_NAME}p3 is not available yet; power off and reboot"
+        exit 0
+      fi
+      log "using numbered partition node $FOUND_DEV while GPT partition name refreshes"
+    fi
+    log "created or rediscovered $FOUND_DEV in free space"
   fi
 fi
 
@@ -226,13 +233,19 @@ if [ -z "$FS_TYPE" ] && [ ! -e "$MARKER" ]; then
     log "failed to extend blank BASEOS_DATA to the end of $DISK"
     exit 0
   fi
-  partx -u -n 3 "$DISK" >/dev/null 2>&1 || :
+  if ! partx -u -n 3 "$DISK" >/dev/null 2>&1; then
+    log "partx could not refresh partition 3 after extending BASEOS_DATA"
+  fi
   /sbin/mdev -s 2>/dev/null || :
   sleep 1
-  find_partition BASEOS_DATA "$DISK_NAME" || {
-    log "extended partition has no kernel device node yet; reboot and inspect"
-    exit 0
-  }
+  if ! find_partition BASEOS_DATA "$DISK_NAME"; then
+    # Do not confuse a stale sysfs PARTNAME with a missing block node.
+    if ! find_partition_number 3 "$DISK_NAME"; then
+      log "extended partition 3 is not available as /dev/${DISK_NAME}p3 yet; power off and reboot"
+      exit 0
+    fi
+    log "using numbered partition node $FOUND_DEV; will verify its live geometry before formatting"
+  fi
   DATA_DEV=$FOUND_DEV
   DATA_NAME=$FOUND_NAME
 
