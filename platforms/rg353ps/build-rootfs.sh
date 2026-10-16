@@ -81,7 +81,8 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add \
       v4l-utils evtest alsa-utils iw libzip \
       mesa-egl mesa-gles mesa-gbm mesa-dri-gallium \
-      libdrm-tests mesa-utils kmscube sdl2
+      libdrm-tests mesa-utils kmscube sdl2 \
+      sgdisk partx blkid wipefs exfatprogs
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
       -o "$R/usr/sbin/rg353ps-control-center" /src/rg353ps-control-center.c
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
@@ -112,6 +113,12 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
       echo "evtest was not installed into target rootfs" >&2
       exit 1
     }
+    test -x "$R/usr/sbin/baseos-init-userdata" || { echo "user data initializer is missing" >&2; exit 1; }
+    test -x "$R/usr/bin/sgdisk" || test -x "$R/usr/sbin/sgdisk" || { echo "sgdisk is missing" >&2; exit 1; }
+    test -x "$R/usr/bin/partx" || test -x "$R/usr/sbin/partx" || { echo "partx is missing" >&2; exit 1; }
+    test -x "$R/usr/bin/blkid" || test -x "$R/usr/sbin/blkid" || { echo "blkid is missing" >&2; exit 1; }
+    test -x "$R/usr/bin/wipefs" || test -x "$R/usr/sbin/wipefs" || { echo "wipefs is missing" >&2; exit 1; }
+    test -x "$R/usr/bin/mkfs.exfat" || test -x "$R/usr/sbin/mkfs.exfat" || test -x "$R/sbin/mkfs.exfat" || { echo "mkfs.exfat is missing" >&2; exit 1; }
     test -e "$R/usr/lib/libzip.so.5" || { echo "libzip runtime is missing for mGBA" >&2; exit 1; }
     test -x "$R/usr/bin/aplay" || {
       echo "aplay was not installed into target rootfs" >&2
@@ -124,6 +131,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
 
     chmod 0755 "$R/etc/init.d/rcS"
     chmod 0755 "$R/usr/sbin/baseos-mount-storage"
+    chmod 0755 "$R/usr/sbin/baseos-init-userdata"
     chmod 0755 "$R/usr/sbin/baseos-frontend-session"
     chmod 0755 "$R/usr/sbin/rg353ps-hotkeyd"
     chmod 0755 "$R/usr/sbin/rg353ps-v4l2-report"
@@ -156,7 +164,7 @@ EOF
     echo "rootfs prepared at $R"
   '
 
-for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/baseos-mount-storage" "$ROOTFS/usr/sbin/baseos-frontend-session" "$ROOTFS/usr/sbin/rg353ps-hotkeyd" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-graphics-stack-test" "$ROOTFS/usr/sbin/rg353ps-sdl2-test" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/etc/baseos.conf" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
+for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/baseos-mount-storage" "$ROOTFS/usr/sbin/baseos-init-userdata" "$ROOTFS/usr/sbin/baseos-frontend-session" "$ROOTFS/usr/sbin/rg353ps-hotkeyd" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-graphics-stack-test" "$ROOTFS/usr/sbin/rg353ps-sdl2-test" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/etc/baseos.conf" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
   [ -e "$file" ] || { echo "rootfs missing required file: $file" >&2; exit 1; }
 done
 
