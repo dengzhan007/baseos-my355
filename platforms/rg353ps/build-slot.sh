@@ -82,17 +82,12 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
 BaseOS RG353PS Slot frontend experiment
 =======================================
 
-This bundle is for the second/front-end SD card, not the BaseOS boot partition.
-Copy the contents of this ZIP to the root of the frontend SD card. It supplies a
-Slot build patched to use SDL2 KMSDRM + EGL/GLES and RG353PS Nintendo A/B mapping,
-plus musl-compatible mGBA and gpSP cores.
+This bundle is intended to be extracted directly into the root of the TF2 card for priority use. BaseOS automatically scans TF2 first for a usable frontend adapter; if TF2 is absent or has no usable frontend, BaseOS checks TF1's BASEOS_DATA user partition.
 
-On the BaseOS boot FAT partition, edit baseos.conf to use:
-  frontend=slot
-  allow_external_frontend_adapters=yes
+No baseos.conf edits are required. The second card is mounted at /mnt/TF2 and this adapter is:
+  /mnt/TF2/.baseos/frontends/slot/launch.sh
 
-The second card is mounted at /mnt/SDCARD. The adapter is:
-  /mnt/SDCARD/.baseos/frontends/slot/launch.sh
+If you intentionally want the TF1 copy to be the fallback, extract the bundle to the root of its BASEOS_DATA partition. TF2 remains the preferred location when it has a usable frontend.
 
 This is an experimental port. The UI, input behavior, emulator launch, sound,
 battery/backlight, shutdown, save states and extended play have not yet all
