@@ -1,24 +1,18 @@
 diff --git a/crates/slot/src/input/evdev.rs b/crates/slot/src/input/evdev.rs
-index 0000000..0000000 100644
 --- a/crates/slot/src/input/evdev.rs
 +++ b/crates/slot/src/input/evdev.rs
-@@ -56,8 +56,8 @@ pub fn to_raw(ev: Ev) -> Option<RawEvent> {
- pub fn code_to_btn(code: u16) -> Option<Btn> {
-     Some(match code {
+@@ -77,2 +77,4 @@ pub fn code_to_btn(code: u16) -> Option<Btn> {
 -        0x130 => Btn::A,
 -        0x131 => Btn::B,
-+        // RG353PS follows Nintendo face-button labels: BTN_SOUTH is B (bottom),
-+        // and BTN_EAST is A (right). Keep the physical event codes unchanged.
++        // RG353PS uses Nintendo face-button labels: BTN_SOUTH is B (bottom),
++        // and BTN_EAST is A (right). Keep physical event codes unchanged.
 +        0x130 => Btn::B,
 +        0x131 => Btn::A,
-         0x132 => Btn::Y,
-         0x133 => Btn::X,
-         0x134 => Btn::L1,
-@@ -64,6 +64,18 @@ pub fn code_to_btn(code: u16) -> Option<Btn> {
+@@ -91,6 +93,17 @@ pub fn code_to_btn(code: u16) -> Option<Btn> {
          _ => return None,
      })
  }
-+
+ 
 +#[cfg(test)]
 +mod rg353ps_layout_tests {
 +    use super::*;
@@ -29,5 +23,5 @@ index 0000000..0000000 100644
 +        assert_eq!(code_to_btn(0x131), Some(Btn::A)); // BTN_EAST: right
 +    }
 +}
- 
++
  const WANTED: [u16; 15] = [
