@@ -17,7 +17,7 @@ echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null || :
 # The kernel's DRM fbdev emulation is ready by this point. Use the user's
 # editable BASEOS_BOOT/bootlogo.bmp if present, otherwise the packaged default.
 # The status helper draws only a small overlay and leaves this image visible.
-if ! /usr/sbin/baseos-bootlogo; then
+if ! /usr/sbin/baseos-bootlogo >/dev/null 2>&1; then
   /usr/bin/fbsplash 0 >/dev/null 2>&1 || :
 fi
 
