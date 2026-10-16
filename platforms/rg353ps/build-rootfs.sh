@@ -36,7 +36,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
   -v "$HERE/src":/src:ro \
   -e KREL="$KREL" \
   alpine:3.22 sh -euc '
-    apk add --no-cache busybox-static tar zstd build-base linux-headers
+    apk add --no-cache busybox-static tar zstd build-base linux-headers sdl2-dev
 
     R=/work/rootfs
     rm -rf "$R"
@@ -86,8 +86,17 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
       -o "$R/usr/sbin/rg353ps-control-center" /src/rg353ps-control-center.c
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
       -o "$R/usr/sbin/rg353ps-hotkeyd" /src/rg353ps-hotkeyd.c
+    # Build a target-native SDL2 KMSDRM/GLES test against the runtime library
+    # already installed in the target rootfs. sdl2-dev is build-container only.
+    gcc -std=c11 -O2 -Wall -Wextra -Werror \\
+      $(sdl2-config --cflags) -o "$R/usr/sbin/rg353ps-sdl2-test" \\
+      /src/rg353ps-sdl2-test.c $(sdl2-config --libs)
     test -x "$R/usr/sbin/rg353ps-hotkeyd" || {
       echo "global hotkey service was not built" >&2
+      exit 1
+    }
+    test -x "$R/usr/sbin/rg353ps-sdl2-test" || {
+      echo "SDL2 KMSDRM test program was not built" >&2
       exit 1
     }
     test -x "$R/usr/sbin/rg353ps-control-center" || {
@@ -120,6 +129,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     chmod 0755 "$R/usr/sbin/rg353ps-jpeg-encode-test"
     chmod 0755 "$R/usr/sbin/rg353ps-hardware-audit"
     chmod 0755 "$R/usr/sbin/rg353ps-graphics-stack-test"
+    chmod 0755 "$R/usr/sbin/rg353ps-sdl2-test"
     chmod 0755 "$R/usr/sbin/rg353ps-control-center"
     chmod 1777 "$R/tmp"
     mkdir -p "$R/mnt/SDCARD" "$R/run" "$R/root" "$R/var/empty"
@@ -145,7 +155,7 @@ EOF
     echo "rootfs prepared at $R"
   '
 
-for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/baseos-mount-storage" "$ROOTFS/usr/sbin/baseos-frontend-session" "$ROOTFS/usr/sbin/rg353ps-hotkeyd" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-graphics-stack-test" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/etc/baseos.conf" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
+for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/baseos-mount-storage" "$ROOTFS/usr/sbin/baseos-frontend-session" "$ROOTFS/usr/sbin/rg353ps-hotkeyd" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-graphics-stack-test" "$ROOTFS/usr/sbin/rg353ps-sdl2-test" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/etc/baseos.conf" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
   [ -e "$file" ] || { echo "rootfs missing required file: $file" >&2; exit 1; }
 done
 
