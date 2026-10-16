@@ -36,8 +36,16 @@ to diagnostics.
 This is a selection/adapter framework, not a claim that NextUI or Slot already
 run on RK3566. Their binary ABI/libraries, video backend, audio stack, controller
 mapping and emulator payloads still need device-specific compatibility work.
-The image also lacks the final read-only root, dedicated persistent system-data
-partition, A/B updater and release packaging. Use a spare TF card. The file
+The new image layout separates `BASEOS_BOOT`, a fixed-size `BASEOS_ROOT`,
+and `BASEOS_DATA` for frontend/user files. At first boot, the blank user
+partition is expanded to the physical card's end and formatted as exFAT, then
+mounted at `/mnt/SDCARD`. This means frontend packages, ROMs and saves belong
+on `BASEOS_DATA`, not on the small FAT boot partition. Existing images from
+before this change do not gain a dedicated partition unless reflashed with the
+new image; back up the card first. The boot partition remains visible to a PC
+for boot files and `baseos.conf`; the Linux root partition is separate from
+user files. The system still lacks a final read-only root, A/B updater and
+release packaging. Use a spare TF card. The file
 `work/rg353ps/rg353ps-uboot.bin` remains an intermediate bootloader region,
 not a standalone SD-card image.
 
@@ -128,10 +136,15 @@ trusted key. Kernel config/patch and certificate provenance is in
 [kernel/UPSTREAM.md](kernel/UPSTREAM.md).
 
 The result is `work/rg353ps/baseos-rg353ps-smoke.img.gz`, a 2 GiB SD-card
-**bring-up image**. It boots a minimal BusyBox userspace plus hardware diagnostic
-tools and an evdev-driven text UI on tty1. The UI verifies controller-to-screen
-response and offers audio, Wi-Fi and system status pages; it is not the finished
-game frontend and does not include BaseOS's read-only/A-B update system. It is not considered supported until it is tested on real RG353PS hardware.
+**bring-up image**. It uses a 256 MiB FAT `BASEOS_BOOT` partition, a bounded
+1280 MiB ext4 `BASEOS_ROOT` partition, and a blank `BASEOS_DATA` partition.
+The first-boot initializer expands the user partition to the actual TF-card end
+and formats it as exFAT, then mounts it at `/mnt/SDCARD`. This allows the same
+card to hold user-installed frontend packages, ROMs and saves. It boots a
+minimal BusyBox userspace plus hardware diagnostic tools and an evdev-driven
+text UI on tty1; it is not the finished game frontend or the final read-only/A-B
+BaseOS update system. It is not considered supported until tested on real
+RG353PS hardware.
 
 After boot, run `/usr/sbin/rg353ps-v4l2-report` to capture driver status,
 V4L2 capabilities, and advertised capture/output formats to
