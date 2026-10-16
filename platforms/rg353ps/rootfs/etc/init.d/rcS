@@ -86,10 +86,15 @@ done
 # The acknowledgement is stored on the actual mounted BOOT FAT filesystem, so
 # it survives power cycles and the full-screen prompt does not recur each boot.
 if [ ! -e "$BOOT_CONFIRM_MARKER" ]; then
-  /usr/sbin/rg353ps-startup-prompt --ready
-  if printf 'confirmed=1\n' > "$BOOT_CONFIRM_MARKER"; then
-    sync
-  else
-    say "WARNING: unable to persist first-boot acknowledgement on BASEOS_BOOT."
-  fi
+  while [ ! -e "$BOOT_CONFIRM_MARKER" ]; do
+    if /usr/sbin/rg353ps-startup-prompt --ready; then
+      if printf 'confirmed=1\n' > "$BOOT_CONFIRM_MARKER"; then
+        sync
+      else
+        say "WARNING: unable to persist first-boot acknowledgement on BASEOS_BOOT."
+      fi
+    else
+      say "First-boot confirmation screen failed; retrying without starting tty1 UI."
+    fi
+  done
 fi
