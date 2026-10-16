@@ -17,6 +17,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+
+  build-slot-rg353ps:
+    name: Build experimental Slot bundle for RG353PS
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Check Slot bundle builder syntax
+        run: |
+          sh -n platforms/rg353ps/build-slot.sh
+          sh -n platforms/rg353ps/frontends/slot/launch.sh
+
+      - name: Build Slot, patched for SDL2 KMSDRM and musl
+        run: ./platforms/rg353ps/build-slot.sh
+
+      - name: Publish experimental Slot bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseos-rg353ps-slot
+          if-no-files-found: error
+          path: |
+            work/rg353ps/frontends/baseos-rg353ps-slot.zip
+            work/rg353ps/frontends/baseos-rg353ps-slot.zip.sha256
+
   build-rg353ps:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -43,6 +69,8 @@ jobs:
           sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-jpeg-encode-test
           sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-hardware-audit
           sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-graphics-stack-test
+          sh -n platforms/rg353ps/frontends/slot/launch.sh
+          sh -n platforms/rg353ps/build-slot.sh
           sh -n platforms/rg353ps/build-image.sh
 
       - name: Build RG353PS U-Boot
