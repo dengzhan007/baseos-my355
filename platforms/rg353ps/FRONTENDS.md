@@ -1,21 +1,36 @@
 # RG353PS frontends
 
-The diagnostic UI remains the default and failure fallback. The frontend selector
-is configured in `baseos.conf` on the `BASEOS_BOOT` partition. Profiles are
-`diagnostic`, `auto`, `nextui`, `slot`, and `custom`.
+The diagnostic UI is the safe default and fallback. The frontend selector
+is configured in `baseos.conf` on `BASEOS_BOOT`. Profiles are `diagnostic`,
+`auto`, `nextui`, `slot`, and `custom`.
+
+The intended layout is now three partitions on the same TF card:
+`BASEOS_BOOT` (FAT boot files and `baseos.conf`), `BASEOS_ROOT` (bounded
+Linux system partition), and `BASEOS_DATA` (exFAT user space). On first boot,
+the new initializer expands `BASEOS_DATA` to the end of the physical card if
+it is blank, formats it, and mounts it at `/mnt/SDCARD`. Frontend adapters,
+`System/`, ROMs and saves belong on this user-data partition—not on the boot
+partition. On cards larger than the 2 GiB image, the user partition is extended
+to use the rest of the card. If the card has no free space for a user partition,
+the initializer logs a warning and does not shrink or rewrite the mounted root
+filesystem.
 
 Adapters are expected under `/mnt/SDCARD/.baseos/frontends/<name>/launch.sh`.
-External adapters run with root privileges, so executing them is disabled by
-default. Set `allow_external_frontend_adapters=yes` in `baseos.conf` only
-after installing a frontend adapter you trust. Leave it as `no` while testing
-the diagnostic system. No NextUI or Slot runtime adapter is included yet.
+External adapters run with root privileges, so execution is disabled by default.
+After installing an adapter you trust, set both `frontend=slot` (or `auto`)
+and `allow_external_frontend_adapters=yes` in `baseos.conf`. The configured
+second-card device remains only as a fallback for legacy/external storage.
 
-The planned adapter environment includes `PLATFORM=rg353ps`,
-`BASEOS_BOOT=/mnt/boot`, `BASEOS_FRONTEND_ROOT=/mnt/SDCARD`,
+The adapter environment includes `PLATFORM=rg353ps`, `BASEOS_BOOT=/mnt/boot`,
+`BASEOS_FRONTEND_ROOT=/mnt/SDCARD`,
 `BASEOS_DATA_DIR=/mnt/SDCARD/.baseos/data`, and
-`BASEOS_USERDATA_DIR=/mnt/SDCARD/.baseos/userdata`. The latter paths currently
-live on the frontend card; a dedicated persistent system-data partition and
-read-only root are future work.
+`BASEOS_USERDATA_DIR=/mnt/SDCARD/.baseos/userdata`.
+
+**Important:** images built before the three-partition layout have no dedicated
+user-data partition. Back up the card and flash a new image before expecting
+same-card frontend installation. The boot partition remains a small maintenance
+partition and is still visible to a PC; the Linux root partition is separate
+from user files. A read-only root and A/B updater remain future work.
 
 The RG353PS global hotkey service is independent of the UI process. It handles
 volume +/- as RK817 playback-only mixer adjustments, and a 2-second power-key
@@ -45,9 +60,10 @@ mGBA/gpSP source archives and patch/license materials under
 `System/licenses/`. Do not consider the bundle device-validated until its CI
 build passes and it has been smoke-tested on the handheld.
 
-When a successful `baseos-rg353ps-slot` workflow artifact is available, extract
-its ZIP contents to the root of the second/front-end TF card. Then edit
-`baseos.conf` on the first card's FAT `BASEOS_BOOT` partition:
+When a successful `baseos-rg353ps-slot` workflow artifact is available, boot
+once with the new three-partition image, shut down, and put the TF card in a PC.
+Extract the ZIP contents to the root of the `BASEOS_DATA` user partition (not
+`BASEOS_BOOT`). Then edit `baseos.conf` on the FAT `BASEOS_BOOT` partition:
 
 ```
 frontend=slot
