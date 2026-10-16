@@ -96,6 +96,45 @@ find_partition_number() {
 
 mkdir -p "$USERDATA"
 
+# Fast path for normal boots: the first-boot marker records the actual data
+# partition and filesystem. Validate that it belongs to the same physical card
+# as the mounted BASEOS_BOOT partition, then mount it directly instead of
+# rescanning the GPT and rechecking every candidate partition.
+if [ -e "$MARKER" ] && ! is_mounted "$USERDATA"; then
+  RECORDED_DEV=
+  RECORDED_FS=
+  while IFS= read -r marker_line || [ -n "$marker_line" ]; do
+    case "$marker_line" in
+      partition=*) RECORDED_DEV=\${marker_line#partition=} ;;
+      filesystem=*) RECORDED_FS=\${marker_line#filesystem=} ;;
+    esac
+  done < "$MARKER"
+
+  case "$RECORDED_FS" in exfat|vfat) ;; *) RECORDED_FS= ;; esac
+  case "$RECORDED_DEV" in /dev/mmcblk*p[0-9]*) ;; *) RECORDED_DEV= ;; esac
+  BOOT_SOURCE=$(awk '$2 == "/mnt/boot" { print $1; exit }' /proc/mounts)
+  BOOT_NAME=\${BOOT_SOURCE#/dev/}
+  DATA_NAME=\${RECORDED_DEV#/dev/}
+  BOOT_PARENT=$(parent_disk_name "$BOOT_NAME" 2>/dev/null || :)
+  DATA_PARENT=$(parent_disk_name "$DATA_NAME" 2>/dev/null || :)
+  RECORDED_TYPE=$(blkid -p -s TYPE -o value "$RECORDED_DEV" 2>/dev/null || :)
+
+  if [ -n "$RECORDED_FS" ] && [ -b "$RECORDED_DEV" ] \
+      && [ "$RECORDED_TYPE" = "$RECORDED_FS" ] \
+      && [ -n "$BOOT_PARENT" ] && [ "$BOOT_PARENT" = "$DATA_PARENT" ]; then
+    /sbin/modprobe "$RECORDED_FS" 2>/dev/null || :
+    if mount -t "$RECORDED_FS" -o rw,noatime "$RECORDED_DEV" "$USERDATA" 2>/dev/null; then
+      mkdir -p "$USERDATA/.baseos" "$USERDATA/Games" "$USERDATA/BIOS" \
+        "$USERDATA/Saves" "$USERDATA/States" "$USERDATA/System" 2>/dev/null || :
+      log "$USERDATA mounted from recorded marker $RECORDED_DEV ($RECORDED_FS; fast path)"
+      exit 0
+    fi
+    log "recorded data-partition mount failed; falling back to full discovery"
+  else
+    log "recorded data marker is stale or invalid; falling back to full discovery"
+  fi
+fi
+
 # If already mounted, do not touch the partition table; ensure the first-boot
 # marker is present so the startup gate can distinguish success from failure.
 if is_mounted "$USERDATA"; then
@@ -318,13 +357,15 @@ fi
 
 mkdir -p "$USERDATA/.baseos" "$USERDATA/Games" "$USERDATA/BIOS" \
   "$USERDATA/Saves" "$USERDATA/States" "$USERDATA/System" 2>/dev/null || :
-if [ ! -e "$MARKER" ]; then
+MARKER_PARTITION=$(sed -n 's/^partition=//p' "$MARKER" 2>/dev/null | head -n 1)
+MARKER_FILESYSTEM=$(sed -n 's/^filesystem=//p' "$MARKER" 2>/dev/null | head -n 1)
+if [ ! -e "$MARKER" ] || [ "$MARKER_PARTITION" != "$DATA_DEV" ] \
+    || [ "$MARKER_FILESYSTEM" != "$FS_TYPE" ]; then
   if printf 'version=1\npartition=%s\nfilesystem=%s\n' "$DATA_DEV" "$FS_TYPE" > "$MARKER"; then
     sync
   else
-    log "mounted user data but could not persist initialization marker on $BOOT"
+    log "mounted user data but could not persist the initialization marker on $BOOT"
   fi
-fi
-log "user space mounted at $USERDATA from $DATA_DEV ($FS_TYPE)"
+filog "user space mounted at $USERDATA from $DATA_DEV ($FS_TYPE)"
 splash 100 "USER STORAGE READY"
 exit 0
