@@ -33,6 +33,7 @@ KREL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["kernel_
 echo "== assembling RG353PS smoke-test image =="
 docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
   -v "$WORK":/work \
+  -v "$REPO_ROOT/assets":/assets:ro \
   -e BOOT_MIB="$BOOT_MIB" \
   -e ROOT_MIB="$ROOT_MIB" \
   -e TOTAL_SIZE="$TOTAL_SIZE" \
@@ -89,14 +90,19 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
     mmd -i "$BOOTFS" ::/device_trees
     mcopy -i "$BOOTFS" /work/kernel/output/Image ::/Image
     mcopy -i "$BOOTFS" /work/kernel/output/rk3566-anbernic-rg353ps.dtb ::/device_trees/rk3566-anbernic-rg353ps.dtb
+    # Runtime reads this same editable file; NextUI's Bootlogo.pak can replace it.
+    mcopy -i "$BOOTFS" /assets/bootlogo.bmp ::/bootlogo.bmp
     mcopy -o -i "$BOOTFS" /work/rootfs/etc/baseos.conf ::/baseos.conf
 
     cat > /tmp/extlinux.conf <<EOF
+DEFAULT BaseOS-RG353PS
+TIMEOUT 1
+MENU HIDE
 LABEL BaseOS-RG353PS
-  MENU LABEL BaseOS RG353PS experimental bring-up
+  MENU LABEL BaseOS RG353PS
   LINUX /Image
   FDT /device_trees/rk3566-anbernic-rg353ps.dtb
-  APPEND root=PARTUUID=$ROOT_PARTUUID rootfstype=ext4 rootwait rw console=tty0 console=ttyS2,1500000n8 loglevel=7 init=/sbin/init
+  APPEND root=PARTUUID=$ROOT_PARTUUID rootfstype=ext4 rootwait rw quiet loglevel=3 vt.global_cursor_default=0 cpufreq.default_governor=performance console=ttyS2,1500000n8 init=/sbin/init
 EOF
     mcopy -i "$BOOTFS" /tmp/extlinux.conf ::/extlinux/extlinux.conf
 
