@@ -1,0 +1,116 @@
+#!/bin/sh
+# Frontend selector. Config is plain key=value data and is never sourced or eval'd.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+SDCARD=/mnt/SDCARD
+CONFIG=/mnt/boot/baseos.conf
+[ -r "$CONFIG" ] || CONFIG=/etc/baseos.conf
+
+log() { printf 'baseos-frontend: %s\n' "$*" > /dev/kmsg 2>/dev/null || :; }
+
+setting() {
+  setting_key=$1
+  setting_default=$2
+  setting_value=$setting_default
+  if [ -r "$CONFIG" ]; then
+    while IFS= read -r setting_line || [ -n "$setting_line" ]; do
+      case "$setting_line" in
+        "$setting_key"=*) setting_value=${setting_line#*=} ;;
+      esac
+    done < "$CONFIG"
+  fi
+  printf '%s' "$setting_value"
+}
+
+diagnostic() {
+  log "starting built-in diagnostic UI"
+  exec /usr/sbin/rg353ps-control-center
+}
+
+FRONTEND=$(setting frontend diagnostic)
+FRONTEND_DEVICE=$(setting frontend_device /dev/mmcblk2p1)
+FRONTEND_FSTYPE=$(setting frontend_fstype vfat)
+FRONTENDS_ORDER=$(setting frontends_order nextui,slot,custom)
+case "$FRONTEND" in
+  diagnostic) diagnostic ;;
+  auto|nextui|slot|custom) ;;
+  *) log "unknown frontend '$FRONTEND'; falling back to diagnostics"; diagnostic ;;
+esac
+
+mkdir -p "$SDCARD"
+ln -sfn "$SDCARD" /mnt/sdcard
+if ! grep -q " $SDCARD " /proc/mounts; then
+  case "$FRONTEND_DEVICE" in
+    /dev/mmcblk*|/dev/sd*|/dev/nvme*)
+      if [ -b "$FRONTEND_DEVICE" ]; then
+        case "$FRONTEND_FSTYPE" in
+          vfat|ext4|exfat)
+            mount -t "$FRONTEND_FSTYPE" -o rw,noatime "$FRONTEND_DEVICE" "$SDCARD" 2>/dev/null || :
+            ;;
+          *) log "invalid frontend_fstype '$FRONTEND_FSTYPE'; expected vfat, ext4 or exfat" ;;
+        esac
+      fi
+      ;;
+    *) log "invalid frontend_device '$FRONTEND_DEVICE'; expected a block device under /dev" ;;
+  esac
+fi
+if ! grep -q " $SDCARD " /proc/mounts; then
+  log "frontend card $FRONTEND_DEVICE is not mounted; falling back to diagnostics"
+  diagnostic
+fi
+
+resolve_adapter() {
+  case "$1" in
+    nextui|slot|custom) adapter="$SDCARD/.baseos/frontends/$1/launch.sh" ;;
+    *) return 1 ;;
+  esac
+  [ -f "$adapter" ] || return 1
+  printf '%s' "$adapter"
+}
+SELECTED=
+LAUNCHER=
+if [ "$FRONTEND" = "auto" ]; then
+  old_ifs=$IFS
+  IFS=,
+  for profile in $FRONTENDS_ORDER; do
+    case "$profile" in nextui|slot|custom) ;; *) continue ;; esac
+    candidate=$(resolve_adapter "$profile") || continue
+    SELECTED=$profile
+    LAUNCHER=$candidate
+    break
+  done
+  IFS=$old_ifs
+else
+  SELECTED=$FRONTEND
+  LAUNCHER=$(resolve_adapter "$SELECTED") || LAUNCHER=
+fi
+if [ -z "$LAUNCHER" ] || [ ! -f "$LAUNCHER" ]; then
+  log "no adapter found for frontend '$FRONTEND'; falling back to diagnostics"
+  diagnostic
+fi
+
+# Opt in explicitly before any frontend-card adapter is executed as root.
+ALLOW_EXTERNAL_ADAPTERS=$(setting allow_external_frontend_adapters no)
+if [ "$ALLOW_EXTERNAL_ADAPTERS" != "yes" ]; then
+  log "external adapter execution disabled; set allow_external_frontend_adapters=yes in baseos.conf to opt in"
+  diagnostic
+fi
+
+PLATFORM=rg353ps
+BASEOS_FRONTEND_ID=$SELECTED
+BASEOS_SYSTEM_ROOT=/
+BASEOS_BOOT=/mnt/boot
+BASEOS_FRONTEND_ROOT=$SDCARD
+BASEOS_DATA_DIR="$SDCARD/.baseos/data"
+BASEOS_USERDATA_DIR="$SDCARD/.baseos/userdata"
+BASEOS_LAUNCHER=$LAUNCHER
+export PLATFORM BASEOS_FRONTEND_ID BASEOS_SYSTEM_ROOT BASEOS_BOOT
+export BASEOS_FRONTEND_ROOT BASEOS_DATA_DIR BASEOS_USERDATA_DIR BASEOS_LAUNCHER
+mkdir -p "$BASEOS_DATA_DIR" "$BASEOS_USERDATA_DIR" 2>/dev/null || :
+cd "$SDCARD" || diagnostic
+log "launching $SELECTED adapter: $LAUNCHER"
+/bin/sh "$LAUNCHER"
+rc=$?
+log "frontend '$SELECTED' exited with status $rc; returning to diagnostics"
+printf '\033[0m\033[?25h\033[2J\033[H' > /dev/tty1 2>/dev/null || :
+exec /usr/sbin/rg353ps-control-center
