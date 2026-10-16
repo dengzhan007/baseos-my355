@@ -40,7 +40,7 @@ parent_disk_name() {
 }
 
 # Identify the physical card containing BASEOS_ROOT so it can never be
-# mistake for TF2 while scanning removable-card partitions.
+# mistaken for TF2 while scanning removable-card partitions.
 SYSTEM_DISK=
 for event_file in /sys/class/block/*p*/uevent; do
   [ -r "$event_file" ] || continue
@@ -53,7 +53,7 @@ for event_file in /sys/class/block/*p*/uevent; do
     esac
   done < "$event_file"
   if [ "$event_part" = "BASEOS_ROOT" ] && [ -n "$event_dev" ]; then
-    SYSTEM_DISK=`$(parent_disk_name "$event_dev") || SYSTEM_DISK=
+    SYSTEM_DISK=$(parent_disk_name "$event_dev") || SYSTEM_DISK=
     break
   fi
 done
