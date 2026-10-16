@@ -7,6 +7,8 @@ allows, then hands off to a frontend such as NextUI. It has no interface of its 
 BaseOS runs from the SD card and leaves the stock system in place: take the card out
 and the Flip boots stock, exactly as before. To install, see [INSTALL.md](INSTALL.md).
 
+> **Experimental RG353PS port:** see [platforms/rg353ps](platforms/rg353ps/README.md). This branch now contains independent U-Boot, Linux kernel, firmware, BusyBox rootfs and SD smoke-image build targets. It is still a first-boot bring-up image, not the finished BaseOS frontend/update system. The Miyoo Flip build path remains unchanged.
+
 ## Features
 
 - **Boots in under 2 seconds.** NextUI shows its first frame about 3 s after

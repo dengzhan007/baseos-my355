@@ -1,0 +1,34 @@
+#!/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+log() {
+  printf 'baseos-storage: %s\n' "$*" > /dev/kmsg 2>/dev/null || :
+}
+is_mounted() { grep -q " $1 " /proc/mounts; }
+
+mkdir -p /mnt/boot
+is_mounted /mnt/boot && exit 0
+
+for event_file in /sys/class/block/*p*/uevent; do
+  [ -r "$event_file" ] || continue
+  devname=
+  partname=
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      DEVNAME=*) devname=${line#DEVNAME=} ;;
+      PARTNAME=*) partname=${line#PARTNAME=} ;;
+    esac
+  done < "$event_file"
+  [ "$partname" = "BASEOS_BOOT" ] || continue
+  [ -n "$devname" ] || continue
+  device="/dev/$devname"
+  [ -b "$device" ] || continue
+  if mount -t vfat -o rw,noatime,utf8 "$device" /mnt/boot 2>/dev/null; then
+    log "mounted $device (BASEOS_BOOT) at /mnt/boot"
+    exit 0
+  fi
+  log "found $device as BASEOS_BOOT but mount failed"
+done
+log "BASEOS_BOOT partition not mounted; using embedded defaults"
+exit 0

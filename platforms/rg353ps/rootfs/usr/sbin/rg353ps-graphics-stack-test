@@ -1,0 +1,103 @@
+#!/bin/sh
+# Active but time-bounded graphics test for the RG353PS experimental image.
+# This intentionally modesets the internal display for about 12 seconds while
+# kmscube runs; do not use it while another application owns DRM master.
+set -u
+
+OUT=/mnt/boot/rg353ps-graphics-stack-test.txt
+if ! (: > "$OUT") 2>/dev/null; then
+  OUT=/tmp/rg353ps-graphics-stack-test.txt
+fi
+echo "RG353PS Graphics Stack Test"
+echo "Report: $OUT"
+exec >"$OUT" 2>&1
+
+echo "RG353PS Graphics Stack Test"
+echo "Output file: $OUT"
+echo "Start time: $(date)"
+echo "Kernel: $(uname -a)"
+echo
+
+section() {
+  echo
+  echo "============================================================"
+  echo "$1"
+  echo "============================================================"
+}
+
+run() {
+  label="$1"
+  shift
+  echo
+  echo "--- $label ---"
+  "$@"
+  rc=$?
+  echo "[exit=$rc]"
+  return 0
+}
+
+section "1. Device nodes and kernel drivers"
+ls -l /dev/dri /dev/fb0 2>&1
+for p in /sys/class/drm/card0-DSI-1/status /sys/class/drm/card0-DSI-1/enabled /sys/class/drm/card0-HDMI-A-1/status; do
+  if [ -r "$p" ]; then echo "$p=$(cat "$p")"; fi
+done
+grep -E '(^| )(panfrost|rockchipdrm|drm_shmem_helper|gpu_sched)( |$)' /proc/modules 2>/dev/null || true
+
+section "2. Installed graphics runtimes and utilities"
+for f in \
+  /usr/lib/libEGL.so.1* \
+  /usr/lib/libGLESv2.so.2* \
+  /usr/lib/libgbm.so.1* \
+  /usr/lib/libdrm.so.2* \
+  /usr/lib/libSDL2-2.0.so.0* \
+  /usr/lib/dri/panfrost_dri.so \
+  /usr/lib/dri/rockchip_dri.so \
+  /usr/lib/dri/kms_swrast_dri.so; do
+  [ ! -e "$f" ] || ls -l "$f"
+done
+for bin in eglinfo kmscube modetest sdl2-config; do
+  command -v "$bin" 2>/dev/null || echo "$bin: not installed"
+done
+
+section "3. DRM connector inventory (read-only)"
+if command -v modetest >/dev/null 2>&1; then
+  run "modetest -M rockchip -c" modetest -M rockchip -c
+else
+  echo "SKIP: modetest is not installed"
+fi
+
+section "4. EGL initialization"
+if command -v eglinfo >/dev/null 2>&1; then
+  run "eglinfo -B" eglinfo -B
+else
+  echo "SKIP: eglinfo is not installed"
+fi
+
+section "5. Timed KMS + EGL + GLES render test"
+echo "A spinning cube should appear on the built-in screen for about 12 seconds."
+echo "Exit code 124 or 143 can be expected when timeout stops kmscube after it stayed running (BusyBox builds may report SIGTERM as 143)."
+if command -v kmscube >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+  run "timeout -s TERM 12 kmscube -D /dev/dri/card0" timeout -s TERM 12 kmscube -D /dev/dri/card0
+elif command -v kmscube >/dev/null 2>&1; then
+  echo "SKIP: timeout is not installed; refusing to run kmscube indefinitely"
+else
+  echo "SKIP: kmscube is not installed"
+fi
+
+section "6. SDL2 KMSDRM + EGL/GLES window test"
+echo "A full-screen red/green/blue/black sequence should appear for about 8 seconds."
+if [ -x /usr/sbin/rg353ps-sdl2-test ] && command -v timeout >/dev/null 2>&1; then
+  run "SDL_VIDEODRIVER=kmsdrm timeout -s TERM 15 /usr/sbin/rg353ps-sdl2-test" \
+    env SDL_VIDEODRIVER=kmsdrm timeout -s TERM 15 /usr/sbin/rg353ps-sdl2-test
+else
+  echo "SKIP: SDL2 test binary or timeout utility is unavailable"
+fi
+
+section "7. Kernel messages after the test"
+dmesg 2>/dev/null | grep -Ei 'panfrost|drm|gpu|egl|iommu|fault|timeout' | tail -n 100 || true
+
+section "Result guidance"
+echo "A successful timeout-limited kmscube run should show a cube for roughly 12 seconds. Exit 124 or 143 can both mean it was stopped by the timeout; check for earlier EGL/DRM errors."
+echo "An EGL error, DRM permission error, failure to find a connector, or GPU fault needs investigation."
+echo "A passing SDL2 test validates this SDL KMSDRM path, not full frontend compatibility."
+echo "End time: $(date)"

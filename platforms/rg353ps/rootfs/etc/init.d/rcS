@@ -1,0 +1,87 @@
+#!/bin/sh
+# Minimal RG353PS bring-up init. The tty1 diagnostic UI is started by BusyBox init.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+mount -t proc proc /proc 2>/dev/null || :
+mount -t sysfs sysfs /sys 2>/dev/null || :
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || :
+mkdir -p /dev/pts /dev/shm /run /tmp /mnt/boot /mnt/roms
+mount -t devpts devpts /dev/pts 2>/dev/null || :
+mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm 2>/dev/null || :
+mount -t tmpfs -o mode=0755 tmpfs /run 2>/dev/null || :
+mount -t tmpfs -o mode=1777 tmpfs /tmp 2>/dev/null || :
+echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null || :
+/sbin/mdev -s 2>/dev/null || :
+/usr/sbin/baseos-mount-storage
+
+# The kernel's DRM fbdev emulation is ready by this point. Use the user's
+# editable BASEOS_BOOT/bootlogo.bmp if present, otherwise the packaged default.
+# The status helper draws only a small overlay and leaves this image visible.
+if ! /usr/sbin/baseos-bootlogo >/dev/null 2>&1; then
+  /usr/bin/fbsplash 0 >/dev/null 2>&1 || :
+fi
+
+say() {
+  # Keep diagnostic details in the kernel log and serial console, not on screen.
+  echo "$*" > /dev/kmsg 2>/dev/null || :
+  echo "$*" > /dev/ttyS2 2>/dev/null || :
+}
+
+say "BaseOS RG353PS experimental bring-up"
+say "Kernel: $(uname -r)"
+if [ -r /proc/device-tree/model ]; then
+  MODEL="$(tr -d '\000' < /proc/device-tree/model)"
+  say "Device: $MODEL"
+fi
+
+# The 3D driver must be present before the frontend opens EGL. Probe optional
+# Wi-Fi/BT, video decode and RGA drivers off the critical path so the main menu
+# does not wait for unrelated devices to finish initializing.
+if [ -x /sbin/modprobe ]; then
+  (
+    /sbin/modprobe rtw88_8821cs 2>/dev/null || :
+    /sbin/modprobe hci_uart 2>/dev/null || :
+    /sbin/modprobe btrtl 2>/dev/null || :
+  ) >/dev/null 2>&1 &
+  /sbin/modprobe panfrost 2>/dev/null || {
+    say "WARNING: failed to load Panfrost GPU driver; 3D acceleration may be unavailable"
+  }
+  /sbin/modprobe hantro-vpu >/dev/null 2>&1 &
+  /sbin/modprobe rockchip_rga >/dev/null 2>&1 &
+fi
+
+# Global hotkeys must work regardless of which UI is selected.
+/usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
+echo $! > /run/rg353ps-hotkeyd.pid
+
+say "BaseOS userspace is up."
+say "The tty1 frontend-session manager starts next; diagnostics remain the fallback."
+
+# Keep later driver notices in the kernel ring buffer without overwriting the
+# diagnostic console. The full log remains available through `dmesg`.
+dmesg -n 4 2>/dev/null || :
+
+# Keep the screen on the customizable logo during ordinary boots. Only a
+# first boot gets the progress pill; once userdata is ready the frontend starts
+# automatically, with no extra confirmation delay.
+BOOT_STORAGE_MARKER=/mnt/boot/.baseos-userdata-v1
+FIRST_BOOT=0
+[ -e "$BOOT_STORAGE_MARKER" ] || FIRST_BOOT=1
+if [ "$FIRST_BOOT" = 1 ]; then
+  /usr/bin/baseos-splash --important 0 "PREPARING USER STORAGE" >/dev/null 2>&1 || :
+fi
+
+while :; do
+  /usr/sbin/baseos-init-userdata >/dev/null 2>&1 || :
+  if grep -q " /mnt/SDCARD " /proc/mounts && [ -e "$BOOT_STORAGE_MARKER" ]; then
+    break
+  fi
+  say "User storage is not ready; retrying initialization."
+  /usr/bin/baseos-splash --important -1 "STORAGE ERROR - RETRYING" >/dev/null 2>&1 || :
+  sleep 1
+done
+
+if [ "$FIRST_BOOT" = 1 ]; then
+  /usr/bin/baseos-splash --important -1 "LOADING FRONTEND" >/dev/null 2>&1 || :
+fi

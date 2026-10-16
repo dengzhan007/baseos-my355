@@ -1,0 +1,372 @@
+#!/bin/sh
+# First-boot initializer for the dedicated BASEOS_DATA user partition.
+# Only a blank, signature-free data partition may be formatted. Existing
+# recognized FAT/exFAT data is mounted without formatting.
+set -u
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+BOOT=/mnt/boot
+USERDATA=/mnt/SDCARD
+MARKER="$BOOT/.baseos-userdata-v1"
+
+SPLASH_ACTIVE=0
+[ -e "$MARKER" ] || SPLASH_ACTIVE=1
+
+log() {
+  log_message="baseos-userdata: $*"
+  printf '%s\n' "$log_message" > /dev/kmsg 2>/dev/null || :
+  if grep -q " $BOOT " /proc/mounts; then
+    printf '%s\n' "$log_message" >> "$BOOT/baseos-userdata-init.txt" 2>/dev/null || :
+  else
+    printf '%s\n' "$log_message" >> /tmp/baseos-userdata-init.txt 2>/dev/null || :
+  fi
+}
+
+splash() {
+  [ "$SPLASH_ACTIVE" = 1 ] || return 0
+  [ -x /usr/bin/baseos-splash ] || return 0
+  /usr/bin/baseos-splash --important "$1" "$2" >/dev/null 2>&1 || :
+}
+
+is_mounted() {
+  grep -q " $1 " /proc/mounts
+}
+
+# Never store the setup marker in an unmounted /mnt/boot directory: it must
+# persist on the real BOOT partition, or a reboot could initialize repeatedly.
+if ! is_mounted "$BOOT"; then
+  log "$BOOT is not mounted; refusing to partition or format user storage"
+  exit 0
+fi
+log "--- user-storage initialization attempt ---"
+splash 10 "PREPARING USER STORAGE"
+
+# Resolve a block partition's parent disk name for the RG353PS (mmcblkXpN).
+parent_disk_name() {
+  case "$1" in
+    *p[0-9]*) printf '%s' "${1%p[0-9]*}" ;;
+    *) return 1 ;;
+  esac
+}
+
+find_partition() {
+  wanted=$1
+  expected_disk=$2
+  FOUND_DEV=
+  FOUND_NAME=
+  for event_file in /sys/class/block/*p*/uevent; do
+    [ -r "$event_file" ] || continue
+    event_dev=
+    event_part=
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        DEVNAME=*) event_dev=${line#DEVNAME=} ;;
+        PARTNAME=*) event_part=${line#PARTNAME=} ;;
+      esac
+    done < "$event_file"
+    [ "$event_part" = "$wanted" ] || continue
+    [ -n "$event_dev" ] || continue
+    event_parent=$(parent_disk_name "$event_dev") || continue
+    [ "$event_parent" = "$expected_disk" ] || continue
+    [ -b "/dev/$event_dev" ] || continue
+    FOUND_DEV="/dev/$event_dev"
+    FOUND_NAME="$event_dev"
+    return 0
+  done
+  return 1
+}
+
+# RG353PS uses mmcblkXpN names. This fallback recovers partition 3 if a PC
+# formatter preserved the partition but cleared its GPT name. It only renames
+# a blank partition or an existing exFAT/FAT volume; other filesystems/signatures
+# are never overwritten or relabeled.
+find_partition_number() {
+  wanted_number=$1
+  expected_disk=$2
+  candidate_name="${expected_disk}p${wanted_number}"
+  candidate_dev="/dev/$candidate_name"
+  FOUND_DEV=
+  FOUND_NAME=
+  [ -b "$candidate_dev" ] || return 1
+  FOUND_DEV=$candidate_dev
+  FOUND_NAME=$candidate_name
+  return 0
+}
+
+mkdir -p "$USERDATA"
+
+# Fast path for normal boots: the first-boot marker records the actual data
+# partition and filesystem. Validate that it belongs to the same physical card
+# as the mounted BASEOS_BOOT partition, then mount it directly instead of
+# rescanning the GPT and rechecking every candidate partition.
+if [ -e "$MARKER" ] && ! is_mounted "$USERDATA"; then
+  RECORDED_DEV=
+  RECORDED_FS=
+  while IFS= read -r marker_line || [ -n "$marker_line" ]; do
+    case "$marker_line" in
+      partition=*) RECORDED_DEV=${marker_line#partition=} ;;
+      filesystem=*) RECORDED_FS=${marker_line#filesystem=} ;;
+    esac
+  done < "$MARKER"
+
+  case "$RECORDED_FS" in exfat|vfat) ;; *) RECORDED_FS= ;; esac
+  case "$RECORDED_DEV" in /dev/mmcblk*p[0-9]*) ;; *) RECORDED_DEV= ;; esac
+  BOOT_SOURCE=$(awk '$2 == "/mnt/boot" { print $1; exit }' /proc/mounts)
+  BOOT_NAME=${BOOT_SOURCE#/dev/}
+  DATA_NAME=${RECORDED_DEV#/dev/}
+  BOOT_PARENT=$(parent_disk_name "$BOOT_NAME" 2>/dev/null || :)
+  DATA_PARENT=$(parent_disk_name "$DATA_NAME" 2>/dev/null || :)
+  RECORDED_TYPE=$(blkid -p -s TYPE -o value "$RECORDED_DEV" 2>/dev/null || :)
+
+  if [ -n "$RECORDED_FS" ] && [ -b "$RECORDED_DEV" ] \
+      && [ "$RECORDED_TYPE" = "$RECORDED_FS" ] \
+      && [ -n "$BOOT_PARENT" ] && [ "$BOOT_PARENT" = "$DATA_PARENT" ]; then
+    /sbin/modprobe "$RECORDED_FS" 2>/dev/null || :
+    if mount -t "$RECORDED_FS" -o rw,noatime "$RECORDED_DEV" "$USERDATA" 2>/dev/null; then
+      mkdir -p "$USERDATA/.baseos" "$USERDATA/Games" "$USERDATA/BIOS" \
+        "$USERDATA/Saves" "$USERDATA/States" "$USERDATA/System" 2>/dev/null || :
+      log "$USERDATA mounted from recorded marker $RECORDED_DEV ($RECORDED_FS; fast path)"
+      exit 0
+    fi
+    log "recorded data-partition mount failed; falling back to full discovery"
+  else
+    log "recorded data marker is stale or invalid; falling back to full discovery"
+  fi
+fi
+
+# If already mounted, do not touch the partition table; ensure the first-boot
+# marker is present so the startup gate can distinguish success from failure.
+if is_mounted "$USERDATA"; then
+  if [ ! -e "$MARKER" ]; then
+    MOUNTED_SOURCE=$(awk '$2 == "/mnt/SDCARD" { print $1; exit }' /proc/mounts)
+    MOUNTED_TYPE=$(awk '$2 == "/mnt/SDCARD" { print $3; exit }' /proc/mounts)
+    if printf 'version=1\npartition=%s\nfilesystem=%s\n' "$MOUNTED_SOURCE" "$MOUNTED_TYPE" > "$MARKER"; then
+      sync
+    else
+      log "user data is mounted but could not persist the initialization marker"
+      exit 1
+    fi
+  fi
+  log "$USERDATA already mounted"
+  exit 0
+fi
+
+# Find the root partition by GPT name, then only touch partitions on that disk.
+ROOT_DEV=
+ROOT_NAME=
+for event_file in /sys/class/block/*p*/uevent; do
+  [ -r "$event_file" ] || continue
+  event_dev=
+  event_part=
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      DEVNAME=*) event_dev=${line#DEVNAME=} ;;
+      PARTNAME=*) event_part=${line#PARTNAME=} ;;
+    esac
+  done < "$event_file"
+  if [ "$event_part" = "BASEOS_ROOT" ] && [ -n "$event_dev" ] && [ -b "/dev/$event_dev" ]; then
+    ROOT_DEV="/dev/$event_dev"
+    ROOT_NAME="$event_dev"
+    break
+  fi
+done
+
+if [ -z "$ROOT_NAME" ]; then
+  log "cannot identify BASEOS_ROOT; refusing to change any partition table"
+  exit 0
+fi
+DISK_NAME=$(parent_disk_name "$ROOT_NAME") || {
+  log "cannot derive parent disk from $ROOT_NAME; refusing partition changes"
+  exit 0
+}
+DISK="/dev/$DISK_NAME"
+[ -b "$DISK" ] || {
+  log "system disk $DISK is not a block device"
+  exit 0
+}
+
+# Locate BASEOS_DATA. Older smoke images had only BOOT and ROOT; on a larger
+# physical card create partition 3 in the unused space after the 2 GiB image.
+if ! find_partition BASEOS_DATA "$DISK_NAME"; then
+  # Recover an existing p3 first, which may have been formatted on a PC before
+  # its GPT partition name was recognized by BaseOS.
+  if find_partition_number 3 "$DISK_NAME"; then
+    EXISTING_TYPE=$(blkid -p -s TYPE -o value "$FOUND_DEV" 2>/dev/null || :)
+    case "$EXISTING_TYPE" in
+      exfat|vfat) ;;
+      "")
+        EXISTING_SIG=$(wipefs -n --noheadings --output TYPE "$FOUND_DEV" 2>/dev/null || :)
+        if [ -n "$(printf '%s' "$EXISTING_SIG" | tr -d '[:space:]')" ]; then
+          log "$FOUND_DEV has an unknown signature and no BASEOS_DATA label; refusing to rename or format it"
+          exit 0
+        fi
+        ;;
+      *)
+        log "$FOUND_DEV has filesystem '$EXISTING_TYPE' and no BASEOS_DATA label; refusing to rename or format it"
+        exit 0
+        ;;
+    esac
+    if ! sgdisk --typecode=3:0700 --change-name=3:BASEOS_DATA "$DISK" >/dev/null 2>&1; then
+      log "could not restore BASEOS_DATA GPT name on $FOUND_DEV"
+      exit 0
+    fi
+    partx -u -n 3 "$DISK" >/dev/null 2>&1 || :
+    /sbin/mdev -s 2>/dev/null || :
+    sleep 1
+    find_partition BASEOS_DATA "$DISK_NAME" || {
+      # Keep the already identified numbered device usable if only PARTNAME
+      # metadata refresh is delayed; no new partition was created.
+      FOUND_DEV="/dev/${DISK_NAME}p3"
+      FOUND_NAME="${DISK_NAME}p3"
+      [ -b "$FOUND_DEV" ] || {
+        log "renamed p3 but the kernel device node is unavailable; reboot and inspect"
+        exit 0
+      }
+    }
+    log "recovered user-data partition $FOUND_DEV by partition number"
+  else
+    if [ -e "$MARKER" ]; then
+      log "storage marker exists but BASEOS_DATA is missing; refusing to repartition"
+      exit 0
+    fi
+    log "BASEOS_DATA absent; checking for free space after system partitions on $DISK"
+    if ! sgdisk --move-second-header --new=3:0:0 --typecode=3:0700 \
+        --change-name=3:BASEOS_DATA "$DISK" >/dev/null 2>&1; then
+      log "could not create BASEOS_DATA (card may be no larger than the old 2 GiB smoke image)"
+      exit 0
+    fi
+    if ! partx -u -n 3 "$DISK" >/dev/null 2>&1; then
+      log "partx could not refresh partition 3 after creating BASEOS_DATA"
+    fi
+    /sbin/mdev -s 2>/dev/null || :
+    sleep 1
+    if ! find_partition BASEOS_DATA "$DISK_NAME"; then
+      # PARTNAME in sysfs can lag behind GPT changes even when the kernel block
+      # device exists. Fall back to the expected mmcblkXp3 node before failing.
+      if ! find_partition_number 3 "$DISK_NAME"; then
+        log "BASEOS_DATA was added to GPT but /dev/${DISK_NAME}p3 is not available yet; power off and reboot"
+        exit 0
+      fi
+      log "using numbered partition node $FOUND_DEV while GPT partition name refreshes"
+    fi
+    log "created or rediscovered $FOUND_DEV in free space"
+  fi
+fi
+
+DATA_DEV=$FOUND_DEV
+DATA_NAME=$FOUND_NAME
+FS_TYPE=$(blkid -p -s TYPE -o value "$DATA_DEV" 2>/dev/null || :)
+log "candidate user partition=$DATA_DEV sysfs_name=$DATA_NAME filesystem=${FS_TYPE:-unknown}"
+
+if [ -z "$FS_TYPE" ] && [ ! -e "$MARKER" ]; then
+  # A blank partition from a newly flashed image has no filesystem signatures.
+  # Never format a partition if wipefs finds any existing signature.
+  SIGNATURES=$(wipefs -n --noheadings --output TYPE "$DATA_DEV" 2>/dev/null || :)
+  if [ -n "$(printf '%s' "$SIGNATURES" | tr -d '[:space:]')" ]; then
+    log "$DATA_DEV has an unrecognized signature; refusing to format it"
+    exit 0
+  fi
+
+  START_FILE="/sys/class/block/$DATA_NAME/start"
+  [ -r "$START_FILE" ] || {
+    log "cannot read starting sector for $DATA_DEV; refusing to resize"
+    exit 0
+  }
+  START=$(cat "$START_FILE")
+  case "$START" in ''|*[!0-9]*) log "invalid start sector '$START'"; exit 0 ;; esac
+
+  # Move the backup GPT to the actual end of the card and extend partition 3
+  # while it is still blank. Formatting happens only after this succeeds.
+  splash 25 "EXPANDING PARTITION"
+  if ! sgdisk --move-second-header --delete=3 --new="3:$START:0" \
+      --typecode=3:0700 --change-name=3:BASEOS_DATA "$DISK" >/dev/null 2>&1; then
+    log "failed to extend blank BASEOS_DATA to the end of $DISK"
+    exit 0
+  fi
+  if ! partx -u -n 3 "$DISK" >/dev/null 2>&1; then
+    log "partx could not refresh partition 3 after extending BASEOS_DATA"
+  fi
+  /sbin/mdev -s 2>/dev/null || :
+  sleep 1
+  if ! find_partition BASEOS_DATA "$DISK_NAME"; then
+    # Do not confuse a stale sysfs PARTNAME with a missing block node.
+    if ! find_partition_number 3 "$DISK_NAME"; then
+      log "extended partition 3 is not available as /dev/${DISK_NAME}p3 yet; power off and reboot"
+      exit 0
+    fi
+    log "using numbered partition node $FOUND_DEV; will verify its live geometry before formatting"
+  fi
+  DATA_DEV=$FOUND_DEV
+  DATA_NAME=$FOUND_NAME
+
+  # Do not format until the kernel sees the full partition size written to GPT.
+  # This avoids silently creating a small filesystem if partx could not update it.
+  NEW_END=$(sgdisk --info=3 "$DISK" | sed -n 's/^Last sector: *\([0-9][0-9]*\).*/\1/p')
+  ACTUAL_START=$(cat "/sys/class/block/$DATA_NAME/start" 2>/dev/null || :)
+  ACTUAL_SIZE=$(cat "/sys/class/block/$DATA_NAME/size" 2>/dev/null || :)
+  case "$NEW_END" in ''|*[!0-9]*)
+    log "could not read GPT end sector for $DATA_DEV; refusing to format"
+    exit 0
+    ;;
+  esac
+  case "$ACTUAL_START" in ''|*[!0-9]*)
+    log "could not read kernel start sector for $DATA_DEV; refusing to format"
+    exit 0
+    ;;
+  esac
+  case "$ACTUAL_SIZE" in ''|*[!0-9]*)
+    log "could not read kernel size for $DATA_DEV; refusing to format"
+    exit 0
+    ;;
+  esac
+  EXPECTED_SIZE=$((NEW_END - START + 1))
+  if [ "$ACTUAL_START" -ne "$START" ] || [ "$ACTUAL_SIZE" -lt "$EXPECTED_SIZE" ]; then
+    log "kernel has not adopted the expanded $DATA_DEV size; reboot to retry before formatting"
+    exit 0
+  fi
+
+  splash 60 "FORMATTING USER STORAGE"
+  if ! mkfs.exfat -L BASEOS_DATA "$DATA_DEV" >/dev/null 2>&1; then
+    log "formatting $DATA_DEV as exFAT failed; no user data was mounted"
+    exit 0
+  fi
+  FS_TYPE=exfat
+  log "formatted new user partition $DATA_DEV as exFAT"
+elif [ -z "$FS_TYPE" ]; then
+  log "BASEOS_DATA has no recognizable filesystem but the initialization marker exists; refusing to format"
+  exit 0
+else
+  case "$FS_TYPE" in
+    exfat|vfat) log "preserving existing $FS_TYPE filesystem on $DATA_DEV" ;;
+    *) log "unsupported existing filesystem '$FS_TYPE' on $DATA_DEV; refusing to format"; exit 0 ;;
+  esac
+fi
+
+case "$FS_TYPE" in
+  exfat|vfat) ;;
+  *) log "unsupported filesystem '$FS_TYPE'"; exit 0 ;;
+esac
+
+/sbin/modprobe exfat 2>/dev/null || :
+splash 85 "MOUNTING USER STORAGE"
+if ! mount -t "$FS_TYPE" -o rw,noatime "$DATA_DEV" "$USERDATA" 2>/dev/null; then
+  log "failed to mount $DATA_DEV ($FS_TYPE) at $USERDATA"
+  exit 0
+fi
+
+mkdir -p "$USERDATA/.baseos" "$USERDATA/Games" "$USERDATA/BIOS" \
+  "$USERDATA/Saves" "$USERDATA/States" "$USERDATA/System" 2>/dev/null || :
+MARKER_PARTITION=$(sed -n 's/^partition=//p' "$MARKER" 2>/dev/null | head -n 1)
+MARKER_FILESYSTEM=$(sed -n 's/^filesystem=//p' "$MARKER" 2>/dev/null | head -n 1)
+if [ ! -e "$MARKER" ] || [ "$MARKER_PARTITION" != "$DATA_DEV" ] \
+    || [ "$MARKER_FILESYSTEM" != "$FS_TYPE" ]; then
+  if printf 'version=1\npartition=%s\nfilesystem=%s\n' "$DATA_DEV" "$FS_TYPE" > "$MARKER"; then
+    sync
+  else
+    log "mounted user data but could not persist the initialization marker on $BOOT"
+  fi
+fi
+log "user space mounted at $USERDATA from $DATA_DEV ($FS_TYPE)"
+splash 100 "USER STORAGE READY"
+exit 0

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Draw a compact status pill over the active boot logo without replacing it.
+set -u
+
+SPLASH_BIN=/usr/bin/fbsplash
+[ "${1:-}" = "--important" ] || exit 2
+shift
+[ "$#" -ge 2 ] || exit 2
+[ -n "$2" ] || exit 2
+[ -x "$SPLASH_BIN" ] || exit 0
+exec "$SPLASH_BIN" "$@"
