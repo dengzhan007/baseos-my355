@@ -130,6 +130,13 @@ fi
 
 # The init script normally mounts BASEOS_DATA here. Retry a non-destructive
 # mount if that earlier step could not mount an already-formatted user area.
+if is_mounted "$TF1"; then
+  TF1_SOURCE=$(awk '$2 == "/mnt/SDCARD" { print $1 " type=" $3; exit }' /proc/mounts)
+  log "TF1 user-data mount ready: $TF1_SOURCE"
+else
+  log "TF1 user-data path /mnt/SDCARD is not mounted before frontend scan"
+fi
+
 if ! is_mounted "$TF1"; then
   for event_file in /sys/class/block/*p*/uevent; do
     [ -r "$event_file" ] || continue
@@ -167,27 +174,68 @@ FRONTENDS_ORDER=$(setting frontends_order nextui,slot,custom)
 
 resolve_adapter() {
   adapter_root=$1
-  case "$2" in
-    nextui|slot|custom) adapter="$adapter_root/.baseos/frontends/$2/launch.sh" ;;
+  profile_name=$2
+  case "$profile_name" in
+    nextui|slot|custom) ;;
     *) return 1 ;;
   esac
-  [ -f "$adapter" ] || return 1
-  # FAT/exFAT do not reliably preserve Unix execute bits. For Slot, the
-  # file must exist; its launcher copies it to writable /tmp and chmods it there.
-  if [ "$2" = "slot" ] && [ ! -f "$adapter_root/System/slot" ]; then
-    log "found Slot adapter at $adapter_root but System/slot is missing"
-    return 1
+
+  # The canonical path is hidden by convention, but offer a visible alias too:
+  # some extraction tools omit dot-prefixed directories from selected views.
+  adapter="$adapter_root/.baseos/frontends/$profile_name/launch.sh"
+  [ -f "$adapter" ] || adapter="$adapter_root/baseos/frontends/$profile_name/launch.sh"
+
+  if [ -f "$adapter" ]; then
+    if [ "$profile_name" = "slot" ] && [ ! -f "$adapter_root/System/slot" ]; then
+      log "found Slot adapter at $adapter_root but System/slot is missing"
+      return 1
+    fi
+    printf '%s' "$adapter"
+    return 0
   fi
-  printf '%s' "$adapter"
+
+  # A Slot ZIP may have been extracted by a tool that skipped the dot-folder,
+  # even though System/slot is present. Use the OS-bundled launcher in that
+  # case, so the package does not silently fall through to diagnostics.
+  if [ "$profile_name" = "slot" ] && [ -f "$adapter_root/System/slot" ]; then
+    log "Slot binary found at $adapter_root/System/slot but adapter file is absent; using built-in launcher"
+    printf '%s' "/usr/sbin/baseos-slot-launcher"
+    return 0
+  fi
+
+  log "no $profile_name adapter at $adapter_root/.baseos/frontends/$profile_name/launch.sh"
+  return 1
 }
 
 scan_root() {
   scan_root_dir=$1
+  log "scanning frontend root $scan_root_dir"
+  if is_mounted "$scan_root_dir"; then
+    scan_source=$(awk -v mountpoint="$scan_root_dir" '$2 == mountpoint { print $1 " type=" $3; exit }' /proc/mounts)
+    log "frontend root mounted: $scan_source"
+  else
+    log "frontend root is not mounted: $scan_root_dir"
+    return 1
+  fi
+
   old_ifs=$IFS
   IFS=,
   for profile in $FRONTENDS_ORDER; do
     case "$profile" in nextui|slot|custom) ;; *) continue ;; esac
-    candidate=$(resolve_adapter "$scan_root_dir" "$profile") || continue
+    candidate=$(resolve_adapter "$scan_root_dir" "$profile") || {
+      # Support archives extracted into one wrapper directory by common GUI tools.
+      for nested_root in "$scan_root_dir"/*; do
+        [ -d "$nested_root" ] || continue
+        candidate=$(resolve_adapter "$nested_root" "$profile") || continue
+        log "found $profile adapter in nested directory $nested_root"
+        SELECTED=$profile
+        LAUNCHER=$candidate
+        FRONTEND_ROOT=$nested_root
+        IFS=$old_ifs
+        return 0
+      done
+      continue
+    }
     SELECTED=$profile
     LAUNCHER=$candidate
     FRONTEND_ROOT=$scan_root_dir
@@ -195,6 +243,7 @@ scan_root() {
     return 0
   done
   IFS=$old_ifs
+  log "no supported frontend found at or one directory below $scan_root_dir"
   return 1
 }
 
@@ -217,6 +266,7 @@ if [ -z "$LAUNCHER" ] && is_mounted "$TF1"; then
 fi
 if [ -z "$LAUNCHER" ]; then
   log "no usable frontend found on TF2 or TF1; falling back to diagnostics"
+  log "inspect $DETECTION_LOG; expected Slot files are System/slot and .baseos/frontends/slot/launch.sh"
   diagnostic
 fi
 
