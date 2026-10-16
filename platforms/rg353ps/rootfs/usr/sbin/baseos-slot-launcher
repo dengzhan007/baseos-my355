@@ -1,6 +1,7 @@
 #!/bin/sh
 # BaseOS-bundled fallback launcher for Slot on RG353PS.
 # Used when the frontend package's .baseos adapter was omitted during extraction.
+set -eu
 
 SDCARD="${BASEOS_FRONTEND_ROOT:-/mnt/SDCARD}"
 SYSTEM="$SDCARD/System"
