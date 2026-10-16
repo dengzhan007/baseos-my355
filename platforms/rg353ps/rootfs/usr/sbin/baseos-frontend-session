@@ -18,7 +18,6 @@ DETECTION_LOG=/mnt/boot/baseos-frontend-detection.txt
 # the selected frontend takes over. Logs remain accessible from BASEOS_BOOT.
 FRONTEND_LOG=/mnt/boot/baseos-frontend.log
 : > "$FRONTEND_LOG" 2>/dev/null || FRONTEND_LOG=/tmp/baseos-frontend.log
-: > "$FRONTEND_LOG" 2>/dev/null || :
 log() {
   log_message="baseos-frontend: $*"
   printf '%s\n' "$log_message" > /dev/kmsg 2>/dev/null || :
