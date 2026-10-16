@@ -78,7 +78,10 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     mkdir -p "$R/etc/apk/keys"
     cp -a /etc/apk/keys/. "$R/etc/apk/keys/"
     cp /etc/apk/repositories "$R/etc/apk/repositories"
-    apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add v4l-utils evtest alsa-utils iw
+    apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add \
+      v4l-utils evtest alsa-utils iw \
+      mesa-egl mesa-gles mesa-gbm mesa-dri-gallium \
+      libdrm-tests mesa-utils kmscube sdl2
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
       -o "$R/usr/sbin/rg353ps-control-center" /src/rg353ps-control-center.c
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
@@ -141,7 +144,7 @@ EOF
     echo "rootfs prepared at $R"
   '
 
-for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/baseos-mount-storage" "$ROOTFS/usr/sbin/baseos-frontend-session" "$ROOTFS/usr/sbin/rg353ps-hotkeyd" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/etc/baseos.conf" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
+for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/baseos-mount-storage" "$ROOTFS/usr/sbin/baseos-frontend-session" "$ROOTFS/usr/sbin/rg353ps-hotkeyd" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-graphics-stack-test" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/etc/baseos.conf" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
   [ -e "$file" ] || { echo "rootfs missing required file: $file" >&2; exit 1; }
 done
 
