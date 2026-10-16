@@ -79,7 +79,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     cp -a /etc/apk/keys/. "$R/etc/apk/keys/"
     cp /etc/apk/repositories "$R/etc/apk/repositories"
     apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add \
-      v4l-utils evtest alsa-utils iw \
+      v4l-utils evtest alsa-utils iw libzip \
       mesa-egl mesa-gles mesa-gbm mesa-dri-gallium \
       libdrm-tests mesa-utils kmscube sdl2
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
@@ -112,6 +112,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
       echo "evtest was not installed into target rootfs" >&2
       exit 1
     }
+    test -e "$R/usr/lib/libzip.so.5" || { echo "libzip runtime is missing for mGBA" >&2; exit 1; }
     test -x "$R/usr/bin/aplay" || {
       echo "aplay was not installed into target rootfs" >&2
       exit 1
