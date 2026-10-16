@@ -164,7 +164,6 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     chmod 0755 "$R/usr/bin/fbsplash"
     chmod 0755 "$R/usr/sbin/baseos-bootlogo"
     chmod 0755 "$R/usr/sbin/baseos-frontend-session"
-    chmod 0755 "$R/usr/sbin/baseos-slot-launcher"
     chmod 0755 "$R/usr/sbin/rg353ps-hotkeyd"
     chmod 0755 "$R/usr/sbin/rg353ps-v4l2-report"
     chmod 0755 "$R/usr/sbin/rg353ps-jpeg-encode-test"
