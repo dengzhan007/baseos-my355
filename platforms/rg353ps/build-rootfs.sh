@@ -86,6 +86,8 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
       -o "$R/usr/sbin/rg353ps-control-center" /src/rg353ps-control-center.c
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
+      -o "$R/usr/sbin/rg353ps-startup-prompt" /src/rg353ps-startup-prompt.c
+    gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
       -o "$R/usr/sbin/rg353ps-hotkeyd" /src/rg353ps-hotkeyd.c
     # Build a target-native SDL2 KMSDRM/GLES test against the runtime library
     # already installed in the target rootfs. sdl2-dev is build-container only.
@@ -102,6 +104,10 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     }
     test -x "$R/usr/sbin/rg353ps-control-center" || {
       echo "interactive control UI was not built" >&2
+      exit 1
+    }
+    test -x "$R/usr/sbin/rg353ps-startup-prompt" || {
+      echo "first-boot storage prompt was not built" >&2
       exit 1
     }
 
@@ -140,6 +146,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     chmod 0755 "$R/usr/sbin/rg353ps-graphics-stack-test"
     chmod 0755 "$R/usr/sbin/rg353ps-sdl2-test"
     chmod 0755 "$R/usr/sbin/rg353ps-control-center"
+    chmod 0755 "$R/usr/sbin/rg353ps-startup-prompt"
     chmod 1777 "$R/tmp"
     mkdir -p "$R/mnt/SDCARD" "$R/run" "$R/root" "$R/var/empty"
     ln -sfn /mnt/SDCARD "$R/mnt/sdcard"
@@ -164,7 +171,7 @@ EOF
     echo "rootfs prepared at $R"
   '
 
-for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/baseos-mount-storage" "$ROOTFS/usr/sbin/baseos-init-userdata" "$ROOTFS/usr/sbin/baseos-frontend-session" "$ROOTFS/usr/sbin/rg353ps-hotkeyd" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-graphics-stack-test" "$ROOTFS/usr/sbin/rg353ps-sdl2-test" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/etc/baseos.conf" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
+for file in "$ROOTFS/usr/bin/busybox" "$ROOTFS/sbin/init" "$ROOTFS/etc/init.d/rcS" "$ROOTFS/usr/sbin/baseos-mount-storage" "$ROOTFS/usr/sbin/baseos-init-userdata" "$ROOTFS/usr/sbin/baseos-frontend-session" "$ROOTFS/usr/sbin/rg353ps-hotkeyd" "$ROOTFS/usr/sbin/rg353ps-hardware-audit" "$ROOTFS/usr/sbin/rg353ps-graphics-stack-test" "ROOTFS/usr/sbin/rg353ps-sdl2-test" "$ROOTFS/usr/sbin/rg353ps-control-center" "$ROOTFS/usr/sbin/rg353ps-startup-prompt" "$ROOTFS/etc/baseos.conf" "$ROOTFS/lib/modules/$KREL/modules.dep"; do
   [ -e "$file" ] || { echo "rootfs missing required file: $file" >&2; exit 1; }
 done
 
