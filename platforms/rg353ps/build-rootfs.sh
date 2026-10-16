@@ -83,7 +83,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add \
       v4l-utils evtest alsa-utils iw libzip libgcc freetype \
       mesa-egl mesa-gles mesa-gbm mesa-dri-gallium \
-      libdrm-tests mesa-utils kmscube sdl2 \
+      libdrm-tests mesa-utils kmscube sdl2 sdl2_image sdl2_ttf libsamplerate lz4-libs \
       sgdisk partx blkid wipefs exfatprogs
 
     # Keep a default logo in the immutable rootfs as a fallback; the copy on
