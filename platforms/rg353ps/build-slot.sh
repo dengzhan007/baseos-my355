@@ -42,10 +42,12 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     cargo build --profile device --target-dir "$TARGET" -p slot --no-default-features --features device
     test -x "$TARGET/device/slot"
 
-    mkdir -p "$PKG/System" "$PKG/.baseos/frontends/slot"
+    mkdir -p "$PKG/System" "$PKG/.baseos/frontends/slot" "$PKG/baseos/frontends/slot"
     cp "$TARGET/device/slot" "$PKG/System/slot"
     cp /slot-port/launch.sh "$PKG/.baseos/frontends/slot/launch.sh"
-    chmod 0755 "$PKG/.baseos/frontends/slot/launch.sh" "$PKG/System/slot"
+    # Visible alias is intentional: some GUI extractors mishandle dot-prefixed folders.
+    cp /slot-port/launch.sh "$PKG/baseos/frontends/slot/launch.sh"
+    chmod 0755 "$PKG/.baseos/frontends/slot/launch.sh" "$PKG/baseos/frontends/slot/launch.sh" "$PKG/System/slot"
     cp -R licenses "$PKG/System/licenses"
     cp LICENSE "$PKG/System/licenses/slot-LICENSE.txt"
     # Ship the exact patched Slot source corresponding to System/slot.
