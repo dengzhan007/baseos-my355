@@ -208,6 +208,7 @@ fi
 DATA_DEV=$FOUND_DEV
 DATA_NAME=$FOUND_NAME
 FS_TYPE=$(blkid -p -s TYPE -o value "$DATA_DEV" 2>/dev/null || :)
+log "candidate user partition=$DATA_DEV sysfs_name=$DATA_NAME filesystem=${FS_TYPE:-unknown}"
 
 if [ -z "$FS_TYPE" ] && [ ! -e "$MARKER" ]; then
   # A blank partition from a newly flashed image has no filesystem signatures.
@@ -251,7 +252,7 @@ if [ -z "$FS_TYPE" ] && [ ! -e "$MARKER" ]; then
 
   # Do not format until the kernel sees the full partition size written to GPT.
   # This avoids silently creating a small filesystem if partx could not update it.
-  NEW_END=$(sgdisk --info=3 "$DISK" | sed -n 's/^Last sector: *\\([0-9][0-9]*\\).*/\\1/p')
+  NEW_END=$(sgdisk --info=3 "$DISK" | sed -n 's/^Last sector: *\([0-9][0-9]*\).*/\1/p')
   ACTUAL_START=$(cat "/sys/class/block/$DATA_NAME/start" 2>/dev/null || :)
   ACTUAL_SIZE=$(cat "/sys/class/block/$DATA_NAME/size" 2>/dev/null || :)
   case "$NEW_END" in ''|*[!0-9]*)
