@@ -40,8 +40,10 @@ It pins the upstream Slot source revision, replaces its device-specific EGL
 window with SDL2 KMSDRM, applies the RG353PS Nintendo-layout A/B mapping, and
 builds a separate frontend-card ZIP. The package builder is a separate CI job;
 it does not inject Slot into the default OS smoke image or alter the Miyoo Flip
-build. Do not consider the bundle device-validated until its CI build passes and
-it has been smoke-tested on the handheld.
+build. The bundle includes the exact patched Slot source plus corresponding
+mGBA/gpSP source archives and patch/license materials under
+`System/licenses/`. Do not consider the bundle device-validated until its CI
+build passes and it has been smoke-tested on the handheld.
 
 When a successful `baseos-rg353ps-slot` workflow artifact is available, extract
 its ZIP contents to the root of the second/front-end TF card. Then edit
