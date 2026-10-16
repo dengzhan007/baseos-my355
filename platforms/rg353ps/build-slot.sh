@@ -47,16 +47,23 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     cp /slot-port/launch.sh "$PKG/.baseos/frontends/slot/launch.sh"
     chmod 0755 "$PKG/.baseos/frontends/slot/launch.sh" "$PKG/System/slot"
     cp -R licenses "$PKG/System/licenses"
+    cp LICENSE "$PKG/System/licenses/slot-LICENSE.txt"
+    # Ship the exact patched Slot source corresponding to System/slot.
+    tar --exclude=.git -czf "$PKG/System/licenses/slot-rg353ps-$SLOT_REV-source.tar.gz" -C "$SRC" .
     "$PKG/System/slot" --init-root "$PKG"
 
     # Build both upstream Slot libretro cores with the same musl/aarch64 ABI
     # as this experimental BaseOS userspace.
     sh cores/mgba/build.sh build "$MGBA_REV" /tmp/mgba-work "$PKG/System/mgba_libretro.so"
+    # mGBA is dynamically linked; include the patched corresponding source and metadata.
+    tar --exclude=.git -czf "$PKG/System/licenses/mgba-$MGBA_REV-source.tar.gz" -C /tmp/mgba-work/mgba .
 
     GPSP_TARBALL=/tmp/gpsp-src.tar.gz
     curl -fsSL -o "$GPSP_TARBALL" "https://github.com/libretro/gpsp/archive/$GPSP_REV.tar.gz"
     tar -tzf "$GPSP_TARBALL" | grep "^gpsp-$GPSP_REV/Makefile$" >/dev/null
     sh cores/gpsp/build.sh build "$GPSP_REV" "$GPSP_TARBALL" /tmp/gpsp-work "$PKG/System/gpsp_libretro.so"
+    # Include the exact patched source tree corresponding to the output core.
+    tar --exclude=.git -czf "$PKG/System/licenses/gpsp-$GPSP_REV-source.tar.gz" -C "/tmp/gpsp-work/gpsp-$GPSP_REV" .
 
     # Include source/provenance required for the GPL-licensed gpSP core and keep
     # both core build recipes and source patches with the distributable bundle.
