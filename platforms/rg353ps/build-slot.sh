@@ -39,8 +39,14 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     git -C "$SRC" apply /slot-port/slot-nintendo-ab.patch
 
     cd "$SRC"
-    cargo build --profile device --target-dir "$TARGET" -p slot --no-default-features --features device
+    # Slot's SDL2/GLES surface uses libloading::Library::new, which requires dlopen.
+    # Static musl binaries return "Dynamic loading not supported" and exit before SDL init.
+    RUSTFLAGS="-C target-feature=-crt-static" cargo build --profile device --target-dir "$TARGET" -p slot --no-default-features --features device
     test -x "$TARGET/device/slot"
+    readelf -l "$TARGET/device/slot" | grep -q "ld-musl-aarch64.so.1" || {
+      echo "Slot executable is not dynamically linked; SDL2/GLES dlopen will fail" >&2
+      exit 1
+    }
 
     mkdir -p "$PKG/System" "$PKG/.baseos/frontends/slot" "$PKG/baseos/frontends/slot"
     cp "$TARGET/device/slot" "$PKG/System/slot"
