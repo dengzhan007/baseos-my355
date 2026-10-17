@@ -12,6 +12,17 @@ mount -t tmpfs -o mode=0755 tmpfs /run 2>/dev/null || :
 mount -t tmpfs -o mode=1777 tmpfs /tmp 2>/dev/null || :
 echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null || :
 /sbin/mdev -s 2>/dev/null || :
+
+# Sample held boot keys immediately after input devices appear. Do not wait for
+# userdata initialization or first-boot prompts: the user may release Function
+# before those potentially long steps finish. The storage helper itself waits
+# until /mnt/SDCARD is mounted before exporting it.
+rm -f /run/rg353ps-hotkeyd.ready /run/baseos-usb-storage.boot-request
+/usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
+echo $! > /run/rg353ps-hotkeyd.pid
+i=0
+while [ ! -e /run/rg353ps-hotkeyd.ready ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+
 /usr/sbin/baseos-mount-storage
 
 say() {
@@ -95,11 +106,6 @@ if [ ! -e "$BOOT_CONFIRM_MARKER" ]; then
   done
 fi
 
-# Start hotkeys after storage initialization so Function held at power-on can
-# enter USB storage before tty1 starts. rcS waits until that mode exits.
-rm -f /run/rg353ps-hotkeyd.ready /run/baseos-usb-storage.boot-request
-/usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
-echo $! > /run/rg353ps-hotkeyd.pid
-i=0
-while [ ! -e /run/rg353ps-hotkeyd.ready ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+# If Function/Mode was held at power-on, keep tty1's diagnostic/frontend
+# selector from starting until USB storage mode exits.
 while [ -e /run/baseos-usb-storage.boot-request ]; do sleep 0.2; done
