@@ -285,7 +285,35 @@ export BASEOS_FRONTEND_ROOT BASEOS_DATA_DIR BASEOS_USERDATA_DIR BASEOS_LAUNCHER
 mkdir -p "$BASEOS_DATA_DIR" "$BASEOS_USERDATA_DIR" 2>/dev/null || :
 cd "$FRONTEND_ROOT" || diagnostic
 log "launching $SELECTED adapter: $LAUNCHER"
-/bin/sh "$LAUNCHER"
+# Pause the frontend before exposing its mounted card to the USB host.
+kill_tree() {
+  signal=$1
+  pid=$2
+  [ -r "/proc/$pid/task/$pid/children" ] || { kill -"$signal" "$pid" 2>/dev/null || :; return; }
+  children=$(cat "/proc/$pid/task/$pid/children" 2>/dev/null || :)
+  for child in $children; do kill_tree "$signal" "$child"; done
+  kill -"$signal" "$pid" 2>/dev/null || :
+}
+/bin/sh "$LAUNCHER" &
+FRONTEND_PID=$!
+while kill -0 "$FRONTEND_PID" 2>/dev/null; do
+  if [ -e /run/baseos-usb-storage.request ]; then
+    log "USB storage requested; stopping frontend before unmount"
+    kill_tree TERM "$FRONTEND_PID"
+    i=0
+    while kill -0 "$FRONTEND_PID" 2>/dev/null && [ "$i" -lt 15 ]; do sleep 0.1; i=$((i+1)); done
+    if kill -0 "$FRONTEND_PID" 2>/dev/null; then kill_tree KILL "$FRONTEND_PID"; fi
+    wait "$FRONTEND_PID" 2>/dev/null || :
+    cd /
+    : > /run/baseos-frontend-paused
+    while [ -e /run/baseos-usb-storage.request ]; do sleep 0.1; done
+    rm -f /run/baseos-frontend-paused
+    log "USB storage finished; rediscovering frontend"
+    exec /usr/sbin/baseos-frontend-session
+  fi
+  sleep 0.1
+done
+wait "$FRONTEND_PID"
 rc=$?
 log "frontend '$SELECTED' exited with status $rc; returning to diagnostics"
 printf '\033[0m\033[?25h\033[2J\033[H' > /dev/tty1 2>/dev/null || :
