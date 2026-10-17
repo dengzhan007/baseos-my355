@@ -242,7 +242,7 @@ static void discover_inputs(void) {
                 char pressed[256];
                 size_t used = 0;
                 int listed = 0;
-                pressed[0] = '\\0';
+                pressed[0] = '\0';
                 for (int code = 0; code <= KEY_MAX; ++code) {
                     if (key_bits[code / (sizeof(unsigned long) * 8)] &
                         (1UL << (code % (sizeof(unsigned long) * 8)))) {
