@@ -1,5 +1,5 @@
 #!/bin/sh
-# Expose the active frontend/user-data partition over USB-C mass storage.
+# Expose the active frontend/user-data partition over USB mass storage.
 # Never export the system root or BASEOS_BOOT partition.
 set -u
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
@@ -8,6 +8,7 @@ export PATH
 REQUEST=/run/baseos-usb-storage.request
 PAUSED=/run/baseos-frontend-paused
 ACTIVE=/run/baseos-usb-storage.active
+DIAG_LOG=/run/rg353ps-usb-storage.log
 CONFIGFS=/sys/kernel/config
 G="$CONFIGFS/usb_gadget/rockchip"
 UDC=
@@ -20,16 +21,40 @@ BOUND=0
 CREATED_GADGET=0
 BOOT_MODE=0
 PROMPT_PID=
+: > "$DIAG_LOG"
 case "${1:-}" in
   "") ;;
   --boot) BOOT_MODE=1 ;;
   *) log "unknown argument: $1"; exit 2 ;;
 esac
 
-log() { printf 'baseos-usb-storage: %s\n' "$*" > /dev/kmsg 2>/dev/null || :; }
+log() {
+  printf '%s baseos-usb-storage: %s\n' "$(date '+%F %T' 2>/dev/null || echo uptime)" "$*" >> "$DIAG_LOG"
+  printf 'baseos-usb-storage: %s\n' "$*" > /dev/kmsg 2>/dev/null || :
+}
 is_mounted() { grep -q " $1 " /proc/mounts; }
+snapshot() {
+  log "===== diagnostic snapshot: $1 ====="
+  log "mountpoint=$MOUNTPOINT device=$DEVICE fstype=$FSTYPE udc=$UDC bound=$BOUND"
+  if [ -d /sys/class/udc ]; then
+    for u in /sys/class/udc/*; do
+      [ -e "$u" ] || continue
+      log "UDC entry: ${u##*/}"
+      [ ! -r "$u/state" ] || log "UDC state: $(cat "$u/state" 2>/dev/null)"
+      [ ! -r "$u/current_speed" ] || log "UDC speed: $(cat "$u/current_speed" 2>/dev/null)"
+    done
+  else
+    log "/sys/class/udc is missing"
+  fi
+  [ ! -e "$G/UDC" ] || log "gadget UDC binding: $(cat "$G/UDC" 2>/dev/null)"
+  [ ! -e "$G/functions/mass_storage.0/lun.0/file" ] || log "mass-storage backing file: $(cat "$G/functions/mass_storage.0/lun.0/file" 2>/dev/null)"
+  if command -v dmesg >/dev/null 2>&1; then
+    dmesg 2>/dev/null | grep -Ei 'dwc3|usb|phy|gadget|udc|ep0out|mass.storage' | tail -n 80 >> "$DIAG_LOG" || :
+  fi
+}
 cleanup() {
   trap - EXIT INT TERM HUP
+  snapshot "cleanup-before-unbind"
   if [ -n "$UDC" ] && [ -e "$G/UDC" ]; then printf '' > "$G/UDC" 2>/dev/null || :; fi
   if [ -n "$PROMPT_PID" ]; then kill "$PROMPT_PID" 2>/dev/null || :; wait "$PROMPT_PID" 2>/dev/null || :; fi
   if [ -e "$G/configs/b.1/f-mass_storage.0" ]; then rm -f "$G/configs/b.1/f-mass_storage.0"; fi
@@ -49,9 +74,12 @@ cleanup() {
     mount -t "$FSTYPE" -o rw,noatime "$DEVICE" "$MOUNTPOINT" 2>/dev/null || \
       log "WARNING: could not remount $DEVICE at $MOUNTPOINT; reboot before further writes"
   fi
-  sync
+  if [ -n "$MOUNTPOINT" ] && is_mounted "$MOUNTPOINT"; then
+    cp "$DIAG_LOG" "$MOUNTPOINT/rg353ps-usb-storage.log" 2>/dev/null || :
+    sync
+  fi
   rm -f "$ACTIVE" "$REQUEST" "$PAUSED"
-  log "storage mode ended"
+  log "storage mode ended; diagnostic log saved when data partition was mounted"
 }
 trap cleanup EXIT INT TERM HUP
 
@@ -81,12 +109,10 @@ esac
 log "requested storage for $DEVICE mounted at $MOUNTPOINT"
 if [ "$BOOT_MODE" -eq 0 ]; then
   printf '%s\n' "$MOUNTPOINT" > "$REQUEST"
-  # The frontend session stops its launcher tree before acknowledging this marker.
   i=0
   while [ ! -e "$PAUSED" ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i+1)); done
   if [ ! -e "$PAUSED" ]; then log "frontend did not pause; refusing to export a mounted filesystem"; exit 1; fi
 else
-  # rcS waits for the boot-request marker, so tty1's UI has not started.
   /usr/sbin/rg353ps-startup-prompt --usb-storage &
   PROMPT_PID=$!
   sleep 0.2
@@ -98,6 +124,7 @@ log "unmounted $MOUNTPOINT; preparing USB mass storage"
 grep -q " $CONFIGFS " /proc/mounts 2>/dev/null || mount -t configfs none "$CONFIGFS" 2>/dev/null || {
   log "configfs mount failed"; exit 1;
 }
+log "available UDCs: $(ls /sys/class/udc 2>/dev/null | tr '\n' ' ')"
 UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
 [ -n "$UDC" ] || { log "no USB device controller found"; exit 1; }
 if [ ! -d "$G" ]; then
@@ -126,8 +153,11 @@ printf '%s' "$DEVICE" > "$G/functions/mass_storage.0/lun.0/file" || {
 ln -s "$G/functions/mass_storage.0" "$G/configs/b.1/f-mass_storage.0" || {
   log "could not link mass-storage function"; exit 1;
 }
-printf '%s' "$UDC" > "$G/UDC" || { log "could not bind USB controller"; exit 1; }
+snapshot "immediately-before-bind"
+if ! printf '%s' "$UDC" > "$G/UDC"; then log "could not bind USB controller $UDC"; exit 1; fi
 BOUND=1
+sleep 2
+snapshot "two-seconds-after-bind"
 log "USB mass storage active for $DEVICE; unplug cable to return to BaseOS"
 
 # Wait for the host to enumerate the gadget, then for the cable to be removed.
@@ -135,7 +165,6 @@ seen=0
 detached=0
 i=0
 while [ "$i" -lt 3600 ]; do
-  state=$(cat "$G/UDC" 2>/dev/null || :)
   state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || printf 'not attached')
   case "$state" in
     "not attached"|"") if [ "$seen" -eq 1 ]; then detached=$((detached+1)); else i=$((i+1)); fi ;;
