@@ -252,6 +252,17 @@ int main(void) {
         int nfds=0, rc;
         discover_inputs();
         if (!startup_checked) {
+            int key_device_found = 0;
+            for (int i = 0; i < input_count; ++i) {
+                if (inputs[i].fd >= 0 && inputs[i].role == ROLE_KEYS) {
+                    key_device_found = 1;
+                    break;
+                }
+            }
+            /* Do not consume the one-shot boot-key check before gpio-keys
+               exists. On this board input devices may appear after daemon
+               startup; discover_inputs() will retry on subsequent loops. */
+            if (key_device_found) {
             int boot_mode = function_down || mode_down;
             startup_checked = 1;
             if (boot_mode) {
@@ -268,6 +279,7 @@ int main(void) {
                 (void)enter_usb_storage_mode(1);
                 unlink("/run/baseos-usb-storage.boot-request");
                 function_down = mode_down = 0;
+            }
             }
         }
         for(int i=0;i<input_count;++i) {
