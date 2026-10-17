@@ -55,6 +55,31 @@ static int usb_cable_connected(void) {
     DIR *dir;
     struct dirent *entry;
     char path[PATH_LEN], value[64];
+
+    /* When the OTG port is connected to a PC, the UDC state is the most
+       direct signal even if usb_role/extcon is absent or reports host mode. */
+    dir = opendir("/sys/class/udc");
+    if (dir != NULL) {
+        while ((entry = readdir(dir)) != NULL) {
+            FILE *fp;
+            if (entry->d_name[0] == '.') continue;
+            (void)snprintf(path, sizeof(path), "/sys/class/udc/%s/state", entry->d_name);
+            fp = fopen(path, "r");
+            if (fp != NULL) {
+                if (fgets(value, sizeof(value), fp) != NULL) {
+                    value[strcspn(value, "\\r\\n")] = '\\0';
+                    if (strcmp(value, "attached") == 0 || strcmp(value, "powered") == 0 ||
+                        strcmp(value, "default") == 0 || strcmp(value, "addressed") == 0 ||
+                        strcmp(value, "configured") == 0 || strcmp(value, "suspended") == 0) {
+                        (void)fclose(fp); (void)closedir(dir); return 1;
+                    }
+                }
+                (void)fclose(fp);
+            }
+        }
+        (void)closedir(dir);
+    }
+
     dir = opendir("/sys/class/usb_role");
     if (dir != NULL) {
         while ((entry = readdir(dir)) != NULL) {
@@ -75,7 +100,7 @@ static int usb_cable_connected(void) {
     dir = opendir("/sys/class/extcon");
     if (dir != NULL) {
         while ((entry = readdir(dir)) != NULL) {
-            const char *cables[] = {"cable.USB/state", "cable.USB-DEVICE/state", "cable.USB-HOST/state"};
+            const char *cables[] = {"cable.USB/state", "cable.USB-DEVICE/state"};
             if (entry->d_name[0] == '.') continue;
             for (size_t i = 0; i < sizeof(cables)/sizeof(cables[0]); ++i) {
                 FILE *fp;
@@ -137,6 +162,26 @@ static void discover_inputs(void) {
         dev->fd=fd; dev->role=role;
         (void)snprintf(dev->path,sizeof(dev->path),"%s",path);
         (void)snprintf(dev->name,sizeof(dev->name),"%s",name);
+        if (role == ROLE_KEYS) {
+            unsigned long key_bits[(KEY_MAX + (sizeof(unsigned long) * 8)) /
+                                   (sizeof(unsigned long) * 8)];
+            memset(key_bits, 0, sizeof(key_bits));
+            if (ioctl(fd, EVIOCGKEY(sizeof(key_bits)), key_bits) >= 0) {
+                int fn = (key_bits[KEY_F1 / (sizeof(unsigned long) * 8)] &
+                          (1UL << (KEY_F1 % (sizeof(unsigned long) * 8)))) != 0;
+#ifdef KEY_FN
+                fn = fn || ((key_bits[KEY_FN / (sizeof(unsigned long) * 8)] &
+                             (1UL << (KEY_FN % (sizeof(unsigned long) * 8)))) != 0);
+#endif
+                int mode = (key_bits[KEY_MODE / (sizeof(unsigned long) * 8)] &
+                            (1UL << (KEY_MODE % (sizeof(unsigned long) * 8)))) != 0;
+                mode = mode || ((key_bits[KEY_MENU / (sizeof(unsigned long) * 8)] &
+                                 (1UL << (KEY_MENU % (sizeof(unsigned long) * 8)))) != 0);
+                function_down = function_down || fn;
+                mode_down = mode_down || mode;
+                if (fn || mode) log_message("Function/Mode is already held when input device opens");
+            }
+        }
         {
             char msg[200];
             (void)snprintf(msg,sizeof(msg),"watching %s (%s)",path,name);
