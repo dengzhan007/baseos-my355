@@ -67,7 +67,7 @@ static int usb_cable_connected(void) {
             fp = fopen(path, "r");
             if (fp != NULL) {
                 if (fgets(value, sizeof(value), fp) != NULL) {
-                    value[strcspn(value, "\\r\\n")] = '\\0';
+                    value[strcspn(value, "\r\n")] = '\0';
                     if (strcmp(value, "attached") == 0 || strcmp(value, "powered") == 0 ||
                         strcmp(value, "default") == 0 || strcmp(value, "addressed") == 0 ||
                         strcmp(value, "configured") == 0 || strcmp(value, "suspended") == 0) {
