@@ -1,0 +1,130 @@
+#!/bin/sh
+# Expose the active frontend/user-data partition over USB-C mass storage.
+# Never export the system root or BASEOS_BOOT partition.
+set -u
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+REQUEST=/run/baseos-usb-storage.request
+PAUSED=/run/baseos-frontend-paused
+ACTIVE=/run/baseos-usb-storage.active
+CONFIGFS=/sys/kernel/config
+G="$CONFIGFS/usb_gadget/rockchip"
+UDC=
+OLD_UDC=
+HAD_ADB=0
+MOUNTPOINT=
+DEVICE=
+FSTYPE=
+BOUND=0
+CREATED_GADGET=0
+
+log() { printf 'baseos-usb-storage: %s\n' "$*" > /dev/kmsg 2>/dev/null || :; }
+is_mounted() { grep -q " $1 " /proc/mounts; }
+cleanup() {
+  trap - EXIT INT TERM HUP
+  if [ -n "$UDC" ] && [ -e "$G/UDC" ]; then printf '' > "$G/UDC" 2>/dev/null || :; fi
+  if [ -e "$G/configs/b.1/f-mass_storage.0" ]; then rm -f "$G/configs/b.1/f-mass_storage.0"; fi
+  if [ -d "$G/functions/mass_storage.0" ]; then
+    printf '' > "$G/functions/mass_storage.0/lun.0/file" 2>/dev/null || :
+    rmdir "$G/functions/mass_storage.0" 2>/dev/null || :
+  fi
+  if [ "$HAD_ADB" -eq 1 ] && [ -d "$G/functions/ffs.adb" ]; then
+    ln -sfn "$G/functions/ffs.adb" "$G/configs/b.1/f-ffs.adb" 2>/dev/null || :
+    [ -n "$OLD_UDC" ] && printf '%s' "$OLD_UDC" > "$G/UDC" 2>/dev/null || :
+  fi
+  if [ "$CREATED_GADGET" -eq 1 ]; then
+    rmdir "$G/configs/b.1/strings/0x409" "$G/configs/b.1/strings" "$G/configs/b.1" \
+      "$G/strings/0x409" "$G/strings" "$G" 2>/dev/null || :
+  fi
+  if [ -n "$MOUNTPOINT" ] && [ -n "$DEVICE" ] && ! is_mounted "$MOUNTPOINT"; then
+    mount -t "$FSTYPE" -o rw,noatime "$DEVICE" "$MOUNTPOINT" 2>/dev/null || \
+      log "WARNING: could not remount $DEVICE at $MOUNTPOINT; reboot before further writes"
+  fi
+  sync
+  rm -f "$ACTIVE" "$REQUEST" "$PAUSED"
+  log "storage mode ended"
+}
+trap cleanup EXIT INT TERM HUP
+
+[ ! -e "$ACTIVE" ] || exit 1
+: > "$ACTIVE"
+# Prefer the removable frontend card (usually the left TF slot). If absent,
+# export only the dedicated BASEOS_DATA partition, never the boot/root system.
+if is_mounted /mnt/TF2; then
+  MOUNTPOINT=/mnt/TF2
+else
+  MOUNTPOINT=/mnt/SDCARD
+fi
+if ! is_mounted "$MOUNTPOINT"; then log "$MOUNTPOINT is not mounted; refusing storage mode"; exit 1; fi
+DEVICE=$(awk -v m="$MOUNTPOINT" '$2 == m { print $1; exit }' /proc/mounts)
+FSTYPE=$(awk -v m="$MOUNTPOINT" '$2 == m { print $3; exit }' /proc/mounts)
+case "$DEVICE" in /dev/mmcblk*p[0-9]*) ;; *) log "unsupported block source '$DEVICE'; refusing"; exit 1 ;; esac
+case "$FSTYPE" in vfat|exfat) ;; *) log "filesystem '$FSTYPE' is not supported for PC storage mode"; exit 1 ;; esac
+case "$MOUNTPOINT:$DEVICE" in
+  /mnt/SDCARD:/dev/mmcblk*p3) ;;
+  /mnt/TF2:/dev/mmcblk*p[0-9]*) ;;
+  *) log "refusing unexpected mount source $DEVICE at $MOUNTPOINT"; exit 1 ;;
+esac
+log "requested storage for $DEVICE mounted at $MOUNTPOINT"
+printf '%s\n' "$MOUNTPOINT" > "$REQUEST"
+# The frontend session stops its launcher tree before acknowledging this marker.
+i=0
+while [ ! -e "$PAUSED" ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i+1)); done
+if [ ! -e "$PAUSED" ]; then log "frontend did not pause; refusing to export a mounted filesystem"; exit 1; fi
+sync
+if ! umount "$MOUNTPOINT"; then log "could not unmount $MOUNTPOINT; refusing to export"; exit 1; fi
+log "unmounted $MOUNTPOINT; preparing USB mass storage"
+
+grep -q " $CONFIGFS " /proc/mounts 2>/dev/null || mount -t configfs none "$CONFIGFS" 2>/dev/null || {
+  log "configfs mount failed"; exit 1;
+}
+UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
+[ -n "$UDC" ] || { log "no USB device controller found"; exit 1; }
+if [ ! -d "$G" ]; then
+  mkdir -p "$G" || { log "cannot create gadget"; exit 1; }
+  CREATED_GADGET=1
+fi
+if [ -e "$G/UDC" ]; then OLD_UDC=$(cat "$G/UDC" 2>/dev/null || :); fi
+if [ -L "$G/configs/b.1/f-ffs.adb" ]; then HAD_ADB=1; fi
+[ -e "$G/UDC" ] && printf '' > "$G/UDC" 2>/dev/null || :
+rm -f "$G/configs/b.1/f-ffs.adb" "$G/configs/b.1/f-mass_storage.0" 2>/dev/null || :
+mkdir -p "$G/strings/0x409" "$G/configs/b.1/strings/0x409" "$G/functions/mass_storage.0" || {
+  log "cannot create mass-storage function"; exit 1;
+}
+printf '0x2207' > "$G/idVendor" 2>/dev/null || :
+printf '0x0006' > "$G/idProduct" 2>/dev/null || :
+printf '0x0200' > "$G/bcdUSB" 2>/dev/null || :
+printf 'BaseOS' > "$G/strings/0x409/manufacturer" 2>/dev/null || :
+printf 'RG353PS USB Storage' > "$G/strings/0x409/product" 2>/dev/null || :
+printf 'storage' > "$G/configs/b.1/strings/0x409/configuration" 2>/dev/null || :
+printf '500' > "$G/configs/b.1/MaxPower" 2>/dev/null || :
+printf '1' > "$G/functions/mass_storage.0/lun.0/removable" 2>/dev/null || :
+printf '0' > "$G/functions/mass_storage.0/lun.0/ro" 2>/dev/null || :
+printf '%s' "$DEVICE" > "$G/functions/mass_storage.0/lun.0/file" || {
+  log "could not assign $DEVICE to mass-storage gadget"; exit 1;
+}
+ln -s "$G/functions/mass_storage.0" "$G/configs/b.1/f-mass_storage.0" || {
+  log "could not link mass-storage function"; exit 1;
+}
+printf '%s' "$UDC" > "$G/UDC" || { log "could not bind USB controller"; exit 1; }
+BOUND=1
+log "USB mass storage active for $DEVICE; unplug cable to return to BaseOS"
+
+# Wait for the host to enumerate the gadget, then for the cable to be removed.
+seen=0
+detached=0
+i=0
+while [ "$i" -lt 3600 ]; do
+  state=$(cat "$G/UDC" 2>/dev/null || :)
+  state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || printf 'not attached')
+  case "$state" in
+    "not attached"|"") if [ "$seen" -eq 1 ]; then detached=$((detached+1)); else i=$((i+1)); fi ;;
+    *) seen=1; detached=0 ;;
+  esac
+  [ "$detached" -lt 3 ] || break
+  sleep 1
+  i=$((i+1))
+done
+if [ "$i" -ge 3600 ]; then log "storage mode timed out after one hour"; fi
+exit 0
