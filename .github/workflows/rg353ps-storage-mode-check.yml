@@ -1,0 +1,37 @@
+name: RG353PS USB storage mode checks
+
+on:
+  push:
+    branches: [rg353ps-port]
+    paths:
+      - "platforms/rg353ps/src/rg353ps-hotkeyd.c"
+      - "platforms/rg353ps/rootfs/usr/sbin/baseos-usb-storage"
+      - "platforms/rg353ps/rootfs/usr/sbin/baseos-frontend-session"
+      - "platforms/rg353ps/build-rootfs.sh"
+      - "overlay/usr/sbin/usb-gadget-adb"
+      - ".github/workflows/rg353ps-storage-mode-check.yml"
+  pull_request:
+    paths:
+      - "platforms/rg353ps/src/rg353ps-hotkeyd.c"
+      - "platforms/rg353ps/rootfs/usr/sbin/baseos-usb-storage"
+      - "platforms/rg353ps/rootfs/usr/sbin/baseos-frontend-session"
+      - "platforms/rg353ps/build-rootfs.sh"
+      - "overlay/usr/sbin/usb-gadget-adb"
+      - ".github/workflows/rg353ps-storage-mode-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: |
+          sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-usb-storage
+          sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-frontend-session
+          sh -n platforms/rg353ps/build-rootfs.sh
+          sh -n overlay/usr/sbin/usb-gadget-adb
+      - name: Check hotkey daemon compiles cleanly
+        run: gcc -std=c11 -O2 -Wall -Wextra -Werror -fsyntax-only platforms/rg353ps/src/rg353ps-hotkeyd.c
