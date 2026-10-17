@@ -37,7 +37,36 @@ setting() {
 
 diagnostic() {
   log "starting built-in diagnostic UI"
-  exec /usr/sbin/rg353ps-control-center
+  # Keep this supervisor alive in diagnostic mode too, so the Function/Mode
+  # USB-storage hotkey can safely stop the UI and unmount the data card.
+  while :; do
+    /usr/sbin/rg353ps-control-center &
+    DIAGNOSTIC_PID=$!
+    while kill -0 "$DIAGNOSTIC_PID" 2>/dev/null; do
+      if [ -e /run/baseos-usb-storage.request ]; then
+        log "USB storage requested while diagnostic UI is active"
+        kill -TERM "$DIAGNOSTIC_PID" 2>/dev/null || :
+        i=0
+        while kill -0 "$DIAGNOSTIC_PID" 2>/dev/null && [ "$i" -lt 15 ]; do
+          sleep 0.1
+          i=$((i+1))
+        done
+        if kill -0 "$DIAGNOSTIC_PID" 2>/dev/null; then
+          kill -KILL "$DIAGNOSTIC_PID" 2>/dev/null || :
+        fi
+        wait "$DIAGNOSTIC_PID" 2>/dev/null || :
+        cd /
+        : > /run/baseos-frontend-paused
+        while [ -e /run/baseos-usb-storage.request ]; do sleep 0.1; done
+        rm -f /run/baseos-frontend-paused
+        log "USB storage finished from diagnostic mode; rediscovering frontend"
+        exec /usr/sbin/baseos-frontend-session
+      fi
+      sleep 0.1
+    done
+    wait "$DIAGNOSTIC_PID" 2>/dev/null || :
+    sleep 0.2
+  done
 }
 
 parent_disk_name() {
