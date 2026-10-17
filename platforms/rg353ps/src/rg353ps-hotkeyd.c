@@ -239,6 +239,28 @@ static void discover_inputs(void) {
                                    (sizeof(unsigned long) * 8)];
             memset(key_bits, 0, sizeof(key_bits));
             if (ioctl(fd, EVIOCGKEY(sizeof(key_bits)), key_bits) >= 0) {
+                char pressed[256];
+                size_t used = 0;
+                int listed = 0;
+                pressed[0] = '\\0';
+                for (int code = 0; code <= KEY_MAX; ++code) {
+                    if (key_bits[code / (sizeof(unsigned long) * 8)] &
+                        (1UL << (code % (sizeof(unsigned long) * 8)))) {
+                        int n = snprintf(pressed + used, sizeof(pressed) - used,
+                                         "%s%d", listed ? "," : "", code);
+                        if (n > 0 && (size_t)n < sizeof(pressed) - used) {
+                            used += (size_t)n;
+                            listed = 1;
+                        }
+                    }
+                }
+                {
+                    char msg[384];
+                    (void)snprintf(msg, sizeof(msg),
+                        "EVIOCGKEY snapshot for %s: pressed_linux_key_codes=%s",
+                        path, listed ? pressed : "(none)");
+                    log_message(msg);
+                }
                 int fn = (key_bits[KEY_F1 / (sizeof(unsigned long) * 8)] &
                           (1UL << (KEY_F1 % (sizeof(unsigned long) * 8)))) != 0;
 #ifdef KEY_FN
@@ -300,6 +322,14 @@ static void handle_input(struct input_device *dev) {
             else if(ev.value==0) power_press_start_ms=-1;
         } else if (dev->role == ROLE_KEYS && ev.type == EV_KEY) {
             int down = (ev.value != 0);
+            char msg[192];
+            (void)snprintf(msg, sizeof(msg),
+                "KEY_EVENT device=%s code=%u value=%d%s%s",
+                dev->name, ev.code, ev.value,
+                (ev.code == KEY_F1 || ev.code == KEY_FN) ? " mapped=FUNCTION" :
+                (ev.code == KEY_MODE || ev.code == KEY_MENU) ? " mapped=MODE" : "",
+                down ? " state=DOWN" : " state=UP");
+            log_message(msg);
             if (ev.code == KEY_F1 || ev.code == KEY_FN) function_down = down;
             if (ev.code == KEY_MODE || ev.code == KEY_MENU) mode_down = down;
         }
