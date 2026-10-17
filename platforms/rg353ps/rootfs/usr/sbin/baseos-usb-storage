@@ -18,12 +18,20 @@ DEVICE=
 FSTYPE=
 BOUND=0
 CREATED_GADGET=0
+BOOT_MODE=0
+PROMPT_PID=
+case "${1:-}" in
+  "") ;;
+  --boot) BOOT_MODE=1 ;;
+  *) log "unknown argument: $1"; exit 2 ;;
+esac
 
 log() { printf 'baseos-usb-storage: %s\n' "$*" > /dev/kmsg 2>/dev/null || :; }
 is_mounted() { grep -q " $1 " /proc/mounts; }
 cleanup() {
   trap - EXIT INT TERM HUP
   if [ -n "$UDC" ] && [ -e "$G/UDC" ]; then printf '' > "$G/UDC" 2>/dev/null || :; fi
+  if [ -n "$PROMPT_PID" ]; then kill "$PROMPT_PID" 2>/dev/null || :; wait "$PROMPT_PID" 2>/dev/null || :; fi
   if [ -e "$G/configs/b.1/f-mass_storage.0" ]; then rm -f "$G/configs/b.1/f-mass_storage.0"; fi
   if [ -d "$G/functions/mass_storage.0" ]; then
     printf '' > "$G/functions/mass_storage.0/lun.0/file" 2>/dev/null || :
@@ -56,6 +64,10 @@ if is_mounted /mnt/TF2; then
 else
   MOUNTPOINT=/mnt/SDCARD
 fi
+if [ "$BOOT_MODE" -eq 1 ]; then
+  i=0
+  while ! is_mounted "$MOUNTPOINT" && [ "$i" -lt 120 ]; do sleep 1; i=$((i+1)); done
+fi
 if ! is_mounted "$MOUNTPOINT"; then log "$MOUNTPOINT is not mounted; refusing storage mode"; exit 1; fi
 DEVICE=$(awk -v m="$MOUNTPOINT" '$2 == m { print $1; exit }' /proc/mounts)
 FSTYPE=$(awk -v m="$MOUNTPOINT" '$2 == m { print $3; exit }' /proc/mounts)
@@ -67,11 +79,18 @@ case "$MOUNTPOINT:$DEVICE" in
   *) log "refusing unexpected mount source $DEVICE at $MOUNTPOINT"; exit 1 ;;
 esac
 log "requested storage for $DEVICE mounted at $MOUNTPOINT"
-printf '%s\n' "$MOUNTPOINT" > "$REQUEST"
-# The frontend session stops its launcher tree before acknowledging this marker.
-i=0
-while [ ! -e "$PAUSED" ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i+1)); done
-if [ ! -e "$PAUSED" ]; then log "frontend did not pause; refusing to export a mounted filesystem"; exit 1; fi
+if [ "$BOOT_MODE" -eq 0 ]; then
+  printf '%s\n' "$MOUNTPOINT" > "$REQUEST"
+  # The frontend session stops its launcher tree before acknowledging this marker.
+  i=0
+  while [ ! -e "$PAUSED" ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i+1)); done
+  if [ ! -e "$PAUSED" ]; then log "frontend did not pause; refusing to export a mounted filesystem"; exit 1; fi
+else
+  # rcS waits for the boot-request marker, so tty1's UI has not started.
+  /usr/sbin/rg353ps-startup-prompt --usb-storage &
+  PROMPT_PID=$!
+  sleep 0.2
+fi
 sync
 if ! umount "$MOUNTPOINT"; then log "could not unmount $MOUNTPOINT; refusing to export"; exit 1; fi
 log "unmounted $MOUNTPOINT; preparing USB mass storage"
