@@ -1,0 +1,111 @@
+#!/bin/sh
+# Minimal RG353PS bring-up init. The tty1 diagnostic UI is started by BusyBox init.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+mount -t proc proc /proc 2>/dev/null || :
+mount -t sysfs sysfs /sys 2>/dev/null || :
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || :
+mkdir -p /dev/pts /run /tmp /mnt/boot /mnt/roms
+mount -t devpts devpts /dev/pts 2>/dev/null || :
+mount -t tmpfs -o mode=0755 tmpfs /run 2>/dev/null || :
+mount -t tmpfs -o mode=1777 tmpfs /tmp 2>/dev/null || :
+echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null || :
+/sbin/mdev -s 2>/dev/null || :
+
+# Sample held boot keys immediately after input devices appear. Do not wait for
+# userdata initialization or first-boot prompts: the user may release Function
+# before those potentially long steps finish. The storage helper itself waits
+# until /mnt/SDCARD is mounted before exporting it.
+rm -f /run/rg353ps-hotkeyd.ready /run/baseos-usb-storage.boot-request
+/usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
+echo $! > /run/rg353ps-hotkeyd.pid
+i=0
+while [ ! -e /run/rg353ps-hotkeyd.ready ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+
+/usr/sbin/baseos-mount-storage
+
+say() {
+  echo "$*" > /dev/kmsg 2>/dev/null || :
+  echo "$*" > /dev/tty0 2>/dev/null || :
+  echo "$*" > /dev/ttyS2 2>/dev/null || :
+}
+
+say "BaseOS RG353PS experimental bring-up"
+say "Kernel: $(uname -r)"
+if [ -r /proc/device-tree/model ]; then
+  MODEL="$(tr -d '\000' < /proc/device-tree/model)"
+  say "Device: $MODEL"
+fi
+
+# Storage and panel support are built into this kernel configuration. Load the
+# mainline RTL8821CS Wi-Fi function; Bluetooth is attached through UART/serdev.
+if [ -x /sbin/modprobe ]; then
+  /sbin/modprobe rtw88_8821cs 2>/dev/null || :
+  /sbin/modprobe hci_uart 2>/dev/null || :
+  /sbin/modprobe btrtl 2>/dev/null || :
+  if /sbin/modprobe hantro-vpu 2>/dev/null; then
+    say "Hantro VPU driver loaded (decoder/encoder nodes should be available)"
+  else
+    say "WARNING: failed to load Hantro VPU driver"
+  fi
+  # The DRM display controller is built in, but 3D rendering and RGA are
+  # modular in this kernel config. Load them explicitly in this minimal
+  # userspace, which does not run a full udev daemon for modalias autoloading.
+  if /sbin/modprobe panfrost 2>/dev/null; then
+    say "Panfrost GPU driver loaded"
+  else
+    say "WARNING: failed to load Panfrost GPU driver; 3D acceleration may be unavailable"
+  fi
+  if /sbin/modprobe rockchip_rga 2>/dev/null; then
+    say "Rockchip RGA driver loaded"
+  else
+    say "NOTICE: Rockchip RGA driver unavailable; 2D acceleration may be unavailable"
+  fi
+fi
+
+say "BaseOS userspace is up."
+say "The tty1 frontend-session manager starts next; diagnostics remain the fallback."
+
+# Keep later driver notices in the kernel ring buffer without overwriting the
+# diagnostic console. The full log remains available through `dmesg`.
+dmesg -n 4 2>/dev/null || :
+
+# Do not let BusyBox init start tty1's frontend selector until the system card's
+# user-data partition has really been initialized and mounted. On a fresh image
+# the full-screen progress prompt stays visible while partition work runs.
+BOOT_STORAGE_MARKER=/mnt/boot/.baseos-userdata-v1
+BOOT_CONFIRM_MARKER=/mnt/boot/.baseos-firstboot-confirmed-v1
+if [ ! -e "$BOOT_STORAGE_MARKER" ]; then
+  /usr/sbin/rg353ps-startup-prompt --initializing
+fi
+
+while :; do
+  /usr/sbin/baseos-init-userdata
+  if grep -q " /mnt/SDCARD " /proc/mounts && [ -e "$BOOT_STORAGE_MARKER" ]; then
+    break
+  fi
+  say "User storage is not ready; tty1 UI is held until initialization succeeds."
+  /usr/sbin/rg353ps-startup-prompt --retry
+done
+
+# A one-time acknowledgement is required after first successful initialization.
+# The acknowledgement is stored on the actual mounted BOOT FAT filesystem, so
+# it survives power cycles and the full-screen prompt does not recur each boot.
+if [ ! -e "$BOOT_CONFIRM_MARKER" ]; then
+  while [ ! -e "$BOOT_CONFIRM_MARKER" ]; do
+    if /usr/sbin/rg353ps-startup-prompt --ready; then
+      if printf 'confirmed=1\n' > "$BOOT_CONFIRM_MARKER"; then
+        sync
+      else
+        say "WARNING: unable to persist first-boot acknowledgement on BASEOS_BOOT."
+      fi
+    else
+      say "First-boot confirmation screen failed; retrying without starting tty1 UI."
+    fi
+  done
+fi
+
+# If Function/Mode was held at power-on, keep tty1's diagnostic/frontend
+# selector from starting until USB storage mode exits.
+while [ -e /run/baseos-usb-storage.boot-request ]; do sleep 0.2; done

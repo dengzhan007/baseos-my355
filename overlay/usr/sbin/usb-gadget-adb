@@ -102,6 +102,8 @@ while :; do
 	read -t 2 _ <&3
 	cur=
 	read -r cur < "$G/UDC" 2>/dev/null
+	# Storage mode temporarily owns the UDC; do not race its mass-storage gadget.
+	[ -e /run/baseos-usb-storage.active ] && continue
 	[ -z "$cur" ] && [ -e "$FFS/ep1" ] || continue
 	printf '%s' "$udc" > "$G/UDC" 2>/dev/null && log "UDC rebound -> $udc"
 done

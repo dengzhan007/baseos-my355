@@ -1,0 +1,88 @@
+name: RG353PS bring-up build
+
+on:
+  push:
+    branches: [rg353ps-port]
+    paths:
+      - "platforms/rg353ps/**"
+      - "tools/common.sh"
+      - ".github/workflows/rg353ps-uboot.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "platforms/rg353ps/**"
+      - "tools/common.sh"
+      - ".github/workflows/rg353ps-uboot.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rg353ps-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # Slot bundle builds are intentionally omitted; this workflow is for BaseOS only.
+  build-rg353ps:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Enable ARM64 container emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Check shell syntax
+        run: |
+          sh -n tools/common.sh
+          sh -n platforms/rg353ps/build-uboot.sh
+          sh -n platforms/rg353ps/build-kernel.sh
+          sh -n platforms/rg353ps/build-firmware.sh
+          sh -n platforms/rg353ps/build-rootfs.sh
+          sh -n platforms/rg353ps/rootfs/etc/init.d/rcS
+          sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-mount-storage
+          sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-init-userdata
+          sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-frontend-session
+          sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-slot-launcher
+          sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-v4l2-report
+          sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-jpeg-encode-test
+          sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-hardware-audit
+          sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-graphics-stack-test
+          sh -n platforms/rg353ps/frontends/slot/launch.sh
+          sh -n platforms/rg353ps/build-slot.sh
+          sh -n platforms/rg353ps/build-image.sh
+
+      - name: Build RG353PS U-Boot
+        run: ./platforms/rg353ps/build-uboot.sh
+
+      - name: Collect RTL8821CS firmware
+        run: ./platforms/rg353ps/build-firmware.sh
+
+      - name: Build RG353PS Linux kernel, DTB and modules
+        run: ./platforms/rg353ps/build-kernel.sh
+
+      - name: Build diagnostic rootfs and evdev UI
+        run: ./platforms/rg353ps/build-rootfs.sh
+
+      - name: Assemble SD smoke image
+        run: ./platforms/rg353ps/build-image.sh
+
+      - name: Publish RG353PS smoke image and component metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseos-rg353ps-smoke-image
+          if-no-files-found: error
+          path: |
+            work/rg353ps/baseos-rg353ps-smoke.img.gz
+            work/rg353ps/baseos-rg353ps-smoke.img.sha256
+            work/rg353ps/rg353ps-uboot.json
+            work/rg353ps/rg353ps-uboot.sha256
+            work/rg353ps/kernel/output/kernel-build.json
+            work/rg353ps/firmware/firmware-manifest.txt
+            work/rg353ps/firmware/SHA256SUMS
+            work/rg353ps/image-build.json
