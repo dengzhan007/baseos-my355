@@ -173,7 +173,6 @@ while [ "$i" -lt 3600 ]; do
       if [ "$seen" -eq 1 ]; then
         detached=$((detached+1))
       else
-        i=$((i+1))
         if [ "$i" -ge 45 ]; then
           log "UDC never attached within 45 seconds; aborting storage mode and restoring local mount"
           break
