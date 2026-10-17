@@ -36,21 +36,83 @@ is_mounted() { grep -q " $1 " /proc/mounts; }
 snapshot() {
   log "===== diagnostic snapshot: $1 ====="
   log "mountpoint=$MOUNTPOINT device=$DEVICE fstype=$FSTYPE udc=$UDC bound=$BOUND"
+  log "--- UDC state ---"
   if [ -d /sys/class/udc ]; then
     for u in /sys/class/udc/*; do
       [ -e "$u" ] || continue
-      log "UDC entry: ${u##*/}"
-      [ ! -r "$u/state" ] || log "UDC state: $(cat "$u/state" 2>/dev/null)"
-      [ ! -r "$u/current_speed" ] || log "UDC speed: $(cat "$u/current_speed" 2>/dev/null)"
+      log "UDC entry: ${u##*/} target=$(readlink -f "$u" 2>/dev/null)"
+      for a in state current_speed maximum_speed function; do
+        [ ! -r "$u/$a" ] || log "UDC $a: $(cat "$u/$a" 2>/dev/null)"
+      done
     done
   else
     log "/sys/class/udc is missing"
   fi
   [ ! -e "$G/UDC" ] || log "gadget UDC binding: $(cat "$G/UDC" 2>/dev/null)"
   [ ! -e "$G/functions/mass_storage.0/lun.0/file" ] || log "mass-storage backing file: $(cat "$G/functions/mass_storage.0/lun.0/file" 2>/dev/null)"
-  if command -v dmesg >/dev/null 2>&1; then
-    dmesg 2>/dev/null | grep -Ei 'dwc3|usb|phy|gadget|udc|ep0out|mass.storage' | tail -n 80 >> "$DIAG_LOG" || :
+  log "--- USB role-switches ---"
+  found=0
+  for r in /sys/class/usb_role/*; do
+    [ -e "$r" ] || continue
+    found=1
+    log "role node: ${r##*/} target=$(readlink -f "$r" 2>/dev/null)"
+    [ ! -r "$r/role" ] || log "role value: $(cat "$r/role" 2>/dev/null)"
+  done
+  [ "$found" -eq 1 ] || log "no /sys/class/usb_role entries"
+  log "--- extcon ---"
+  found=0
+  for e in /sys/class/extcon/*; do
+    [ -e "$e" ] || continue
+    found=1
+    log "extcon node: ${e##*/} target=$(readlink -f "$e" 2>/dev/null)"
+    for a in name state cable.0/name cable.0/state cable.1/name cable.1/state; do
+      [ ! -r "$e/$a" ] || log "extcon $a: $(cat "$e/$a" 2>/dev/null)"
+    done
+  done
+  [ "$found" -eq 1 ] || log "no /sys/class/extcon entries"
+  log "--- PHY devices ---"
+  found=0
+  for p in /sys/class/phy/* /sys/bus/usb/phy/devices/*; do
+    [ -e "$p" ] || continue
+    found=1
+    log "PHY node: $p target=$(readlink -f "$p" 2>/dev/null)"
+    for a in type power/control power/runtime_status power/runtime_active_time power/runtime_suspended_time; do
+      [ ! -r "$p/$a" ] || log "PHY $a: $(cat "$p/$a" 2>/dev/null)"
+    done
+  done
+  [ "$found" -eq 1 ] || log "no PHY class entries"
+  log "--- DWC3 platform device ---"
+  for p in /sys/bus/platform/devices/fcc00000.usb /sys/devices/platform/fcc00000.usb; do
+    [ -e "$p" ] || continue
+    log "platform node: $p target=$(readlink -f "$p" 2>/dev/null)"
+    for a in uevent modalias power/control power/runtime_status power/runtime_active_time power/runtime_suspended_time; do
+      [ ! -r "$p/$a" ] || log "platform $a: $(tr '\n' ' ' < "$p/$a" 2>/dev/null)"
+    done
+    [ ! -L "$p/driver" ] || log "platform driver: $(readlink -f "$p/driver" 2>/dev/null)"
+  done
+  log "--- device-tree USB properties ---"
+  if [ -d /sys/firmware/devicetree/base ]; then
+    for n in $(find /sys/firmware/devicetree/base -type d 2>/dev/null | grep -Ei '/(usb|usb@|dwc3|.*usb.*|.*typec.*|.*phy.*)$' | head -n 40); do
+      log "DT node: ${n#/sys/firmware/devicetree/base}"
+      for a in compatible status dr_mode phy-names maximum-speed usb-role-switch extcon; do
+        if [ -r "$n/$a" ]; then
+          val=$(tr '\000' ',' < "$n/$a" 2>/dev/null | cut -c1-180)
+          log "DT $a=$val"
+        fi
+      done
+    done
+  else
+    log "device-tree sysfs is unavailable"
   fi
+  log "--- debugfs USB/PHY availability ---"
+  for p in /sys/kernel/debug/usb /sys/kernel/debug/phy /sys/kernel/debug/dwc3 /sys/kernel/debug/regulator; do
+    [ ! -e "$p" ] || log "debugfs path exists: $p"
+  done
+  log "--- recent USB/role/PHY kernel messages ---"
+  if command -v dmesg >/dev/null 2>&1; then
+    dmesg 2>/dev/null | grep -Ei 'dwc3|usb|phy|gadget|udc|ep0out|mass.storage|extcon|role.switch|typec|vbus' | tail -n 100 >> "$DIAG_LOG" || :
+  fi
+  log "===== end diagnostic snapshot: $1 ====="
 }
 cleanup() {
   trap - EXIT INT TERM HUP
