@@ -28,6 +28,7 @@ static long long power_press_start_ms = -1;
 static int function_down;
 static int mode_down;
 static int storage_latched;
+static int startup_checked;
 
 static void stop_running(int sig) { (void)sig; running = 0; }
 static long long monotonic_ms(void) {
@@ -118,15 +119,19 @@ static int usb_cable_connected(void) {
     }
     return 0;
 }
-static int enter_usb_storage_mode(void) {
+static int enter_usb_storage_mode(int boot_mode) {
     pid_t child = fork();
     int status;
     if (child < 0) { log_message("cannot fork USB storage mode"); return 0; }
     if (child == 0) {
-        execl("/usr/sbin/baseos-usb-storage", "baseos-usb-storage", (char *)NULL);
+        if (boot_mode)
+            execl("/usr/sbin/baseos-usb-storage", "baseos-usb-storage", "--boot", (char *)NULL);
+        else
+            execl("/usr/sbin/baseos-usb-storage", "baseos-usb-storage", (char *)NULL);
         _exit(127);
     }
-    log_message("Function/Mode held while USB cable is connected; entering USB storage mode");
+    log_message(boot_mode ? "Function/Mode held at startup; entering USB storage mode" :
+                "Function/Mode held while USB cable is connected; entering USB storage mode");
     while (waitpid(child, &status, 0) < 0) {
         if (errno == EINTR) continue;
         log_message("waitpid failed for USB storage mode");
@@ -246,6 +251,25 @@ int main(void) {
     while(running) {
         int nfds=0, rc;
         discover_inputs();
+        if (!startup_checked) {
+            int boot_mode = function_down || mode_down;
+            startup_checked = 1;
+            if (boot_mode) {
+                int marker = open("/run/baseos-usb-storage.boot-request", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
+                if (marker >= 0) close(marker);
+                log_message("startup storage request latched from held Function/Mode key");
+            }
+            {
+                int ready = open("/run/rg353ps-hotkeyd.ready", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
+                if (ready >= 0) close(ready);
+            }
+            if (boot_mode) {
+                storage_latched = 1;
+                (void)enter_usb_storage_mode(1);
+                unlink("/run/baseos-usb-storage.boot-request");
+                function_down = mode_down = 0;
+            }
+        }
         for(int i=0;i<input_count;++i) {
             if(inputs[i].fd<0) continue;
             pollfds[nfds].fd=inputs[i].fd; pollfds[nfds].events=POLLIN; pollfds[nfds].revents=0; ++nfds;
@@ -274,7 +298,7 @@ int main(void) {
         if (function_down || mode_down) {
             if (!storage_latched && usb_cable_connected()) {
                 storage_latched = 1;
-                (void)enter_usb_storage_mode();
+                (void)enter_usb_storage_mode(0);
             }
         } else {
             storage_latched = 0;
