@@ -19,12 +19,15 @@
 #define PATH_LEN 256
 #define POWER_HOLD_MS 2000
 
-enum device_role { ROLE_NONE = 0, ROLE_VOLUME, ROLE_POWER };
+enum device_role { ROLE_NONE = 0, ROLE_VOLUME, ROLE_POWER, ROLE_KEYS };
 struct input_device { int fd; enum device_role role; char path[PATH_LEN]; char name[NAME_LEN]; };
 static struct input_device inputs[MAX_INPUTS];
 static int input_count;
 static volatile sig_atomic_t running = 1;
 static long long power_press_start_ms = -1;
+static int function_down;
+static int mode_down;
+static int storage_latched;
 
 static void stop_running(int sig) { (void)sig; running = 0; }
 static long long monotonic_ms(void) {
@@ -44,7 +47,68 @@ static void log_message(const char *message) {
 static enum device_role role_for_name(const char *name) {
     if (strstr(name, "gpio-keys-vol") != NULL) return ROLE_VOLUME;
     if (strcmp(name, "rk805 pwrkey") == 0) return ROLE_POWER;
+    if (strstr(name, "gpio-keys") != NULL || strstr(name, "gpio_keys") != NULL)
+        return ROLE_KEYS;
     return ROLE_NONE;
+}
+static int usb_cable_connected(void) {
+    DIR *dir;
+    struct dirent *entry;
+    char path[PATH_LEN], value[64];
+    dir = opendir("/sys/class/usb_role");
+    if (dir != NULL) {
+        while ((entry = readdir(dir)) != NULL) {
+            FILE *fp;
+            if (entry->d_name[0] == '.') continue;
+            (void)snprintf(path, sizeof(path), "/sys/class/usb_role/%s/role", entry->d_name);
+            fp = fopen(path, "r");
+            if (fp != NULL) {
+                if (fgets(value, sizeof(value), fp) != NULL &&
+                    (strstr(value, "device") != NULL || strstr(value, "peripheral") != NULL)) {
+                    (void)fclose(fp); (void)closedir(dir); return 1;
+                }
+                (void)fclose(fp);
+            }
+        }
+        (void)closedir(dir);
+    }
+    dir = opendir("/sys/class/extcon");
+    if (dir != NULL) {
+        while ((entry = readdir(dir)) != NULL) {
+            const char *cables[] = {"cable.USB/state", "cable.USB-DEVICE/state", "cable.USB-HOST/state"};
+            if (entry->d_name[0] == '.') continue;
+            for (size_t i = 0; i < sizeof(cables)/sizeof(cables[0]); ++i) {
+                FILE *fp;
+                (void)snprintf(path, sizeof(path), "/sys/class/extcon/%s/%s", entry->d_name, cables[i]);
+                fp = fopen(path, "r");
+                if (fp != NULL) {
+                    if (fgets(value, sizeof(value), fp) != NULL && value[0] == '1') {
+                        (void)fclose(fp); (void)closedir(dir); return 1;
+                    }
+                    (void)fclose(fp);
+                }
+            }
+        }
+        (void)closedir(dir);
+    }
+    return 0;
+}
+static int enter_usb_storage_mode(void) {
+    pid_t child = fork();
+    int status;
+    if (child < 0) { log_message("cannot fork USB storage mode"); return 0; }
+    if (child == 0) {
+        execl("/usr/sbin/baseos-usb-storage", "baseos-usb-storage", (char *)NULL);
+        _exit(127);
+    }
+    log_message("Function/Mode held while USB cable is connected; entering USB storage mode");
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno == EINTR) continue;
+        log_message("waitpid failed for USB storage mode");
+        return 0;
+    }
+    log_message("USB storage mode finished");
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 static int already_open(const char *path) {
     for (int i=0; i<input_count; ++i)
@@ -117,6 +181,10 @@ static void handle_input(struct input_device *dev) {
         } else if(dev->role==ROLE_POWER&&ev.code==KEY_POWER) {
             if(ev.value==1) { if(power_press_start_ms<0) power_press_start_ms=monotonic_ms(); }
             else if(ev.value==0) power_press_start_ms=-1;
+        } else if (dev->role == ROLE_KEYS && ev.type == EV_KEY) {
+            int down = (ev.value != 0);
+            if (ev.code == KEY_F1 || ev.code == KEY_FN) function_down = down;
+            if (ev.code == KEY_MODE || ev.code == KEY_MENU) mode_down = down;
         }
     }
     if(count<0&&errno!=EAGAIN&&errno!=EINTR) {
@@ -138,7 +206,7 @@ int main(void) {
             pollfds[nfds].fd=inputs[i].fd; pollfds[nfds].events=POLLIN; pollfds[nfds].revents=0; ++nfds;
         }
         {
-            int timeout=nfds==0?500:-1;
+            int timeout=100;
             if(power_press_start_ms>=0) {
                 long long left=POWER_HOLD_MS-(monotonic_ms()-power_press_start_ms);
                 timeout=left>0?(int)left:0;
@@ -157,6 +225,14 @@ int main(void) {
             sync();
             execl("/sbin/poweroff","poweroff",(char *)NULL);
             log_message("poweroff command failed");
+        }
+        if (function_down || mode_down) {
+            if (!storage_latched && usb_cable_connected()) {
+                storage_latched = 1;
+                (void)enter_usb_storage_mode();
+            }
+        } else {
+            storage_latched = 0;
         }
         if(rc==0) continue;
         {
