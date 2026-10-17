@@ -29,20 +29,70 @@ static int function_down;
 static int mode_down;
 static int storage_latched;
 static int startup_checked;
+static int sd_log_active;
+#define BOOT_LOG_STAGE "/run/rg353ps-boot-key.log"
+#define BOOT_LOG_FINAL "/mnt/SDCARD/rg353ps-boot-key.log"
 
 static void stop_running(int sig) { (void)sig; running = 0; }
+static int userdata_is_mounted(void) {
+    FILE *fp = fopen("/proc/mounts", "r");
+    char line[512];
+    if (fp == NULL) return 0;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        char device[128], mountpoint[128], type[64];
+        if (sscanf(line, "%127s %127s %63s", device, mountpoint, type) == 3 &&
+            strcmp(mountpoint, "/mnt/SDCARD") == 0) {
+            (void)fclose(fp);
+            return 1;
+        }
+    }
+    (void)fclose(fp);
+    return 0;
+}
+static void flush_staged_log(void) {
+    int in_fd, out_fd;
+    char buf[1024];
+    ssize_t n;
+    if (sd_log_active || !userdata_is_mounted()) return;
+    in_fd = open(BOOT_LOG_STAGE, O_RDONLY | O_CLOEXEC);
+    out_fd = open(BOOT_LOG_FINAL, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (out_fd < 0) { if (in_fd >= 0) close(in_fd); return; }
+    if (in_fd >= 0) {
+        while ((n = read(in_fd, buf, sizeof(buf))) > 0) {
+            ssize_t off = 0;
+            while (off < n) {
+                ssize_t w = write(out_fd, buf + off, (size_t)(n - off));
+                if (w < 0) { if (errno == EINTR) continue; break; }
+                off += w;
+            }
+        }
+        (void)close(in_fd);
+    }
+    (void)close(out_fd);
+    sd_log_active = 1;
+}
+
 static long long monotonic_ms(void) {
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
     return ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
 }
 static void log_message(const char *message) {
-    char line[256];
-    int fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
+    char line[512];
+    int fd;
     int n = snprintf(line, sizeof(line), "rg353ps-hotkeyd: %s\n", message);
+    fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
     if (fd >= 0) {
         if (n > 0) (void)write(fd, line, (size_t)n < sizeof(line) ? (size_t)n : sizeof(line)-1);
         (void)close(fd);
+    }
+    if (n > 0) {
+        const char *path = sd_log_active ? BOOT_LOG_FINAL : BOOT_LOG_STAGE;
+        fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        if (fd >= 0) {
+            (void)write(fd, line, (size_t)n < sizeof(line) ? (size_t)n : sizeof(line)-1);
+            (void)close(fd);
+        }
     }
 }
 static enum device_role role_for_name(const char *name) {
@@ -247,10 +297,13 @@ int main(void) {
     struct pollfd pollfds[MAX_INPUTS];
     (void)signal(SIGINT,stop_running); (void)signal(SIGTERM,stop_running); (void)signal(SIGHUP,stop_running);
     (void)setsid();
-    log_message("started; volume adjusts playback only, power held 2 seconds shuts down");
+    (void)unlink(BOOT_LOG_STAGE);
+    sd_log_active = 0;
+    log_message("started; boot-key diagnostic logging enabled; target=/mnt/SDCARD/rg353ps-boot-key.log");
     while(running) {
         int nfds=0, rc;
         discover_inputs();
+        flush_staged_log();
         if (!startup_checked) {
             int key_device_found = 0;
             for (int i = 0; i < input_count; ++i) {
@@ -264,6 +317,11 @@ int main(void) {
                startup; discover_inputs() will retry on subsequent loops. */
             if (key_device_found) {
             int boot_mode = function_down || mode_down;
+            char boot_msg[256];
+            (void)snprintf(boot_msg, sizeof(boot_msg),
+                "BOOT_KEY_CHECK result=sampled key_device_found=1 function_down=%d mode_down=%d decision=%s",
+                function_down, mode_down, boot_mode ? "USB_STORAGE" : "NORMAL_BOOT");
+            log_message(boot_msg);
             startup_checked = 1;
             if (boot_mode) {
                 int marker = open("/run/baseos-usb-storage.boot-request", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
