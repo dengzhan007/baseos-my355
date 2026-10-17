@@ -53,10 +53,6 @@ if [ -x /sbin/modprobe ]; then
   fi
 fi
 
-# Global hotkeys must work regardless of which UI is selected.
-/usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
-echo $! > /run/rg353ps-hotkeyd.pid
-
 say "BaseOS userspace is up."
 say "The tty1 frontend-session manager starts next; diagnostics remain the fallback."
 
@@ -98,3 +94,12 @@ if [ ! -e "$BOOT_CONFIRM_MARKER" ]; then
     fi
   done
 fi
+
+# Start hotkeys after storage initialization so Function held at power-on can
+# enter USB storage before tty1 starts. rcS waits until that mode exits.
+rm -f /run/rg353ps-hotkeyd.ready /run/baseos-usb-storage.boot-request
+/usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
+echo $! > /run/rg353ps-hotkeyd.pid
+i=0
+while [ ! -e /run/rg353ps-hotkeyd.ready ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+while [ -e /run/baseos-usb-storage.boot-request ]; do sleep 0.2; done
