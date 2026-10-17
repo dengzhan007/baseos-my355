@@ -30,6 +30,10 @@ static int mode_down;
 static int storage_latched;
 static int startup_checked;
 static int sd_log_active;
+static char ignored_input_paths[MAX_INPUTS][PATH_LEN];
+static int ignored_input_count;
+static long long startup_wait_start_ms;
+static int missing_keys_reported;
 #define BOOT_LOG_STAGE "/run/rg353ps-boot-key.log"
 #define BOOT_LOG_FINAL "/mnt/SDCARD/rg353ps-boot-key.log"
 
@@ -212,7 +216,20 @@ static void discover_inputs(void) {
         if(ioctl(fd,EVIOCGNAME(sizeof(name)-1),name)<0) { (void)close(fd); continue; }
         name[sizeof(name)-1]='\0';
         role=role_for_name(name);
-        if(role==ROLE_NONE) { (void)close(fd); continue; }
+        if(role==ROLE_NONE) {
+            int seen = 0;
+            for (int k = 0; k < ignored_input_count; ++k)
+                if (strcmp(ignored_input_paths[k], path) == 0) { seen = 1; break; }
+            if (!seen) {
+                char msg[256];
+                (void)snprintf(msg, sizeof(msg), "input device not assigned a hotkey role: %s (%s)", path, name);
+                log_message(msg);
+                if (ignored_input_count < MAX_INPUTS)
+                    (void)snprintf(ignored_input_paths[ignored_input_count++], PATH_LEN, "%s", path);
+            }
+            (void)close(fd);
+            continue;
+        }
         dev=&inputs[input_count++];
         dev->fd=fd; dev->role=role;
         (void)snprintf(dev->path,sizeof(dev->path),"%s",path);
@@ -299,6 +316,7 @@ int main(void) {
     (void)setsid();
     (void)unlink(BOOT_LOG_STAGE);
     sd_log_active = 0;
+    startup_wait_start_ms = monotonic_ms();
     log_message("started; boot-key diagnostic logging enabled; target=/mnt/SDCARD/rg353ps-boot-key.log");
     while(running) {
         int nfds=0, rc;
@@ -315,6 +333,11 @@ int main(void) {
             /* Do not consume the one-shot boot-key check before gpio-keys
                exists. On this board input devices may appear after daemon
                startup; discover_inputs() will retry on subsequent loops. */
+            if (!key_device_found && !missing_keys_reported &&
+                monotonic_ms() - startup_wait_start_ms >= 5000) {
+                log_message("BOOT_KEY_CHECK result=not_sampled reason=no_ROLE_KEYS_input_device_found_after_5_seconds; continuing to monitor");
+                missing_keys_reported = 1;
+            }
             if (key_device_found) {
             int boot_mode = function_down || mode_down;
             char boot_msg[256];
