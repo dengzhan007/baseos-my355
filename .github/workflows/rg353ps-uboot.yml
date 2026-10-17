@@ -1,6 +1,12 @@
 name: RG353PS bring-up build
 
 on:
+  push:
+    branches: [rg353ps-port]
+    paths:
+      - "platforms/rg353ps/**"
+      - "tools/common.sh"
+      - ".github/workflows/rg353ps-uboot.yml"
   pull_request:
     branches: [main]
     paths:
