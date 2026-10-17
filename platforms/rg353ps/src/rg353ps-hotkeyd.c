@@ -33,6 +33,7 @@ static int sd_log_active;
 static char ignored_input_paths[MAX_INPUTS][PATH_LEN];
 static int ignored_input_count;
 static long long startup_wait_start_ms;
+static long long keys_first_seen_ms = -1;
 static int missing_keys_reported;
 #define BOOT_LOG_STAGE "/run/rg353ps-boot-key.log"
 #define BOOT_LOG_FINAL "/mnt/SDCARD/rg353ps-boot-key.log"
@@ -102,7 +103,8 @@ static void log_message(const char *message) {
 static enum device_role role_for_name(const char *name) {
     if (strstr(name, "gpio-keys-vol") != NULL) return ROLE_VOLUME;
     if (strcmp(name, "rk805 pwrkey") == 0) return ROLE_POWER;
-    if (strstr(name, "gpio-keys") != NULL || strstr(name, "gpio_keys") != NULL)
+    if (strstr(name, "gpio-keys") != NULL || strstr(name, "gpio_keys") != NULL ||
+        strstr(name, "adc-keys") != NULL)
         return ROLE_KEYS;
     return ROLE_NONE;
 }
@@ -269,6 +271,8 @@ static void discover_inputs(void) {
 #endif
                 int mode = (key_bits[KEY_MODE / (sizeof(unsigned long) * 8)] &
                             (1UL << (KEY_MODE % (sizeof(unsigned long) * 8)))) != 0;
+                mode = mode || ((key_bits[BTN_MODE / (sizeof(unsigned long) * 8)] &
+                                 (1UL << (BTN_MODE % (sizeof(unsigned long) * 8)))) != 0);
                 mode = mode || ((key_bits[KEY_MENU / (sizeof(unsigned long) * 8)] &
                                  (1UL << (KEY_MENU % (sizeof(unsigned long) * 8)))) != 0);
                 function_down = function_down || fn;
@@ -327,11 +331,11 @@ static void handle_input(struct input_device *dev) {
                 "KEY_EVENT device=%s code=%u value=%d%s%s",
                 dev->name, ev.code, ev.value,
                 (ev.code == KEY_F1 || ev.code == KEY_FN) ? " mapped=FUNCTION" :
-                (ev.code == KEY_MODE || ev.code == KEY_MENU) ? " mapped=MODE" : "",
+                (ev.code == KEY_MODE || ev.code == KEY_MENU || ev.code == BTN_MODE) ? " mapped=MODE" : "",
                 down ? " state=DOWN" : " state=UP");
             log_message(msg);
             if (ev.code == KEY_F1 || ev.code == KEY_FN) function_down = down;
-            if (ev.code == KEY_MODE || ev.code == KEY_MENU) mode_down = down;
+            if (ev.code == KEY_MODE || ev.code == KEY_MENU || ev.code == BTN_MODE) mode_down = down;
         }
     }
     if(count<0&&errno!=EAGAIN&&errno!=EINTR) {
@@ -368,29 +372,36 @@ int main(void) {
                 log_message("BOOT_KEY_CHECK result=not_sampled reason=no_ROLE_KEYS_input_device_found_after_5_seconds; continuing to monitor");
                 missing_keys_reported = 1;
             }
-            if (key_device_found) {
-            int boot_mode = function_down || mode_down;
-            char boot_msg[256];
-            (void)snprintf(boot_msg, sizeof(boot_msg),
-                "BOOT_KEY_CHECK result=sampled key_device_found=1 function_down=%d mode_down=%d decision=%s",
-                function_down, mode_down, boot_mode ? "USB_STORAGE" : "NORMAL_BOOT");
-            log_message(boot_msg);
-            startup_checked = 1;
-            if (boot_mode) {
-                int marker = open("/run/baseos-usb-storage.boot-request", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
-                if (marker >= 0) close(marker);
-                log_message("startup storage request latched from held Function/Mode key");
+            if (key_device_found && keys_first_seen_ms < 0) {
+                keys_first_seen_ms = monotonic_ms();
+                log_message("ROLE_KEYS device found; waiting 1500ms to collect startup key events");
             }
-            {
-                int ready = open("/run/rg353ps-hotkeyd.ready", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
-                if (ready >= 0) close(ready);
-            }
-            if (boot_mode) {
-                storage_latched = 1;
-                (void)enter_usb_storage_mode(1);
-                unlink("/run/baseos-usb-storage.boot-request");
-                function_down = mode_down = 0;
-            }
+            /* adc-keys can register after gpio-keys-control. Keep polling all
+               key devices briefly before making the one-shot boot decision. */
+            if (key_device_found && keys_first_seen_ms >= 0 &&
+                monotonic_ms() - keys_first_seen_ms >= 1500) {
+                int boot_mode = function_down || mode_down;
+                char boot_msg[256];
+                (void)snprintf(boot_msg, sizeof(boot_msg),
+                    "BOOT_KEY_CHECK result=sampled key_device_found=1 function_down=%d mode_down=%d decision=%s",
+                    function_down, mode_down, boot_mode ? "USB_STORAGE" : "NORMAL_BOOT");
+                log_message(boot_msg);
+                startup_checked = 1;
+                if (boot_mode) {
+                    int marker = open("/run/baseos-usb-storage.boot-request", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
+                    if (marker >= 0) close(marker);
+                    log_message("startup storage request latched from held Function/Mode key");
+                }
+                {
+                    int ready = open("/run/rg353ps-hotkeyd.ready", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
+                    if (ready >= 0) close(ready);
+                }
+                if (boot_mode) {
+                    storage_latched = 1;
+                    (void)enter_usb_storage_mode(1);
+                    unlink("/run/baseos-usb-storage.boot-request");
+                    function_down = mode_down = 0;
+                }
             }
         }
         for(int i=0;i<input_count;++i) {
