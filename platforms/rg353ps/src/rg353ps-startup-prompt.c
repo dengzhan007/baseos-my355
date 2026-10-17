@@ -75,6 +75,15 @@ static void draw_screen(const char *mode)
         (void)printf("        BaseOS will now search for a frontend automatically.\n");
         (void)printf("        TF2 has priority; TF1 is used if TF2 has no usable frontend.\n\n");
         (void)printf("        Press A (the right face button) or Enter to continue.\n");
+    } else if (strcmp(mode, "usb-storage") == 0) {
+        (void)printf("\033[8;1H");
+        (void)printf("                         USB STORAGE MODE ACTIVE\n\n");
+        (void)printf("        Connect the RG353PS USB data cable to your computer.\n\n");
+        (void)printf("        The selected TF card is being exposed as USB Mass Storage.\n");
+        (void)printf("        Do not remove the card or power off while the computer\n");
+        (void)printf("        is reading or writing files.\n\n");
+        (void)printf("        When finished, safely eject the disk and unplug the cable.\n");
+        (void)printf("        The device will return to BaseOS automatically.\n");
     } else {
         (void)printf("\033[8;1H");
         (void)printf("                         USER STORAGE NOT READY\n\n");
@@ -194,7 +203,7 @@ int main(int argc, char **argv)
     const char *mode;
 
     if (argc != 2) {
-        (void)fprintf(stderr, "usage: %s --initializing|--ready|--retry\n", argv[0]);
+        (void)fprintf(stderr, "usage: %s --initializing|--ready|--retry|--usb-storage\n", argv[0]);
         return 2;
     }
     if (strcmp(argv[1], "--initializing") == 0)
@@ -203,6 +212,8 @@ int main(int argc, char **argv)
         mode = "ready";
     else if (strcmp(argv[1], "--retry") == 0)
         mode = "retry";
+    else if (strcmp(argv[1], "--usb-storage") == 0)
+        mode = "usb-storage";
     else {
         (void)fprintf(stderr, "unknown mode: %s\n", argv[1]);
         return 2;
@@ -215,5 +226,8 @@ int main(int argc, char **argv)
     draw_screen(mode);
     if (strcmp(mode, "initializing") == 0)
         return 0;
+    if (strcmp(mode, "usb-storage") == 0) {
+        for (;;) pause();
+    }
     return wait_for_confirmation();
 }
