@@ -160,19 +160,35 @@ sleep 2
 snapshot "two-seconds-after-bind"
 log "USB mass storage active for $DEVICE; unplug cable to return to BaseOS"
 
-# Wait for the host to enumerate the gadget, then for the cable to be removed.
+# A controller that never leaves "not attached" cannot reliably detect
+# cable removal. Do not leave the data partition unmounted indefinitely:
+# wait up to 45 seconds for first attachment, then safely unbind and remount.
 seen=0
 detached=0
 i=0
 while [ "$i" -lt 3600 ]; do
   state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || printf 'not attached')
   case "$state" in
-    "not attached"|"") if [ "$seen" -eq 1 ]; then detached=$((detached+1)); else i=$((i+1)); fi ;;
-    *) seen=1; detached=0 ;;
+    "not attached"|"")
+      if [ "$seen" -eq 1 ]; then
+        detached=$((detached+1))
+      else
+        i=$((i+1))
+        if [ "$i" -ge 45 ]; then
+          log "UDC never attached within 45 seconds; aborting storage mode and restoring local mount"
+          break
+        fi
+      fi
+      ;;
+    *)
+      if [ "$seen" -eq 0 ]; then log "UDC first attachment observed: state=$state after ${i}s"; fi
+      seen=1
+      detached=0
+      ;;
   esac
-  [ "$detached" -lt 3 ] || break
+  [ "$detached" -lt 3 ] || { log "USB detach confirmed; restoring local mount"; break; }
   sleep 1
   i=$((i+1))
 done
-if [ "$i" -ge 3600 ]; then log "storage mode timed out after one hour"; fi
+if [ "$i" -ge 3600 ]; then log "storage mode timed out after one hour; restoring local mount"; fi
 exit 0
