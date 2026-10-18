@@ -331,36 +331,47 @@ elif text.count(mode_new) == 1:
 else:
     raise SystemExit("Could not uniquely locate USB PHY mode assignment: " + str(mode_old_count))
 
-sample_decl_old = "\tbool vbus_attach, sch_work, notify_charger;" + chr(10)
-sample_decl_new = sample_decl_old + "\tstatic unsigned int rg353ps_peripheral_samples;" + chr(10)
-decl_count = text.count(sample_decl_old)
-if decl_count == 1:
-    text = text.replace(sample_decl_old, sample_decl_new, 1)
-elif text.count(sample_decl_new) == 1:
-    pass
-else:
-    raise SystemExit("Could not uniquely locate USB PHY sample counter declaration: " + str(decl_count))
+import re
 
-vbus_old = "\tvbus_attach = property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid);" + chr(10)
-vbus_format = "RG353PS USB PHY OTG sample: mode=%d state=%d bvalid=%d suspended=%d host_extcon=%d" + chr(92) + "n"
-vbus_dev_info = (
-    "dev_info(&rport->phy->dev, \"" + vbus_format
-    + "\", rport->mode, rport->state, vbus_attach, rport->suspended, "
-    + "rphy->edev ? extcon_get_state(rphy->edev, EXTCON_USB_HOST) : -ENODEV);"
-)
-vbus_line = (
-    chr(9) + "if (rport->mode != USB_DR_MODE_PERIPHERAL ||" + chr(10) +
-    chr(9) + "    (++rg353ps_peripheral_samples % 5) == 1)" + chr(10) +
-    chr(9) * 2 + vbus_dev_info + chr(10)
-)
-vbus_new = vbus_old + vbus_line
-vbus_old_count = text.count(vbus_old)
-if vbus_old_count == 1:
-    text = text.replace(vbus_old, vbus_new, 1)
-elif text.count(vbus_new) == 1:
+# Restrict the sample counter, VBUS read and periodic polling to the OTG
+# state-machine function. The charger-detection worker has a similar VBUS
+# read, but it must not use this function-local counter.
+otg_start = text.index("static void rockchip_usb2phy_otg_sm_work(struct work_struct *work)")
+otg_end = text.index("static const char *chg_to_string", otg_start)
+otg = text[otg_start:otg_end]
+
+counter_old = "\tbool vbus_attach, sch_work, notify_charger;" + chr(10)
+counter_new = counter_old + "\tstatic unsigned int rg353ps_peripheral_samples;" + chr(10)
+counter_count = otg.count(counter_old)
+if counter_count == 1:
+    otg = otg.replace(counter_old, counter_new, 1)
+elif otg.count(counter_new) == 1:
     pass
 else:
-    raise SystemExit("Could not uniquely locate OTG VBUS-valid sample: " + str(vbus_old_count))
+    raise SystemExit("Could not uniquely locate OTG sample counter declaration: " + str(counter_count))
+
+vbus_pattern = re.compile(
+    r"\tvbus_attach = property_enabled\(rphy->grf,\s*&rport->port_cfg->utmi_bvalid\);\n"
+)
+vbus_marker = "RG353PS USB PHY OTG sample:"
+vbus_matches = list(vbus_pattern.finditer(otg))
+if len(vbus_matches) == 1:
+    match = vbus_matches[0]
+    after = otg[match.end():match.end() + 700]
+    if vbus_marker not in after:
+        vbus_format = "RG353PS USB PHY OTG sample: mode=%d state=%d bvalid=%d suspended=%d host_extcon=%d" + chr(92) + "n"
+        log_line = (
+            "\tif (rport->mode != USB_DR_MODE_PERIPHERAL ||\n"
+            "\t    (++rg353ps_peripheral_samples % 5) == 1)\n"
+            "\t\tdev_info(&rport->phy->dev, \"" + vbus_format
+            + "\", rport->mode, rport->state, vbus_attach, rport->suspended, "
+            + "rphy->edev ? extcon_get_state(rphy->edev, EXTCON_USB_HOST) : -ENODEV);\n"
+        )
+        otg = otg[:match.end()] + log_line + otg[match.end():]
+elif len(vbus_matches) == 0 and vbus_marker in otg:
+    pass
+else:
+    raise SystemExit("Could not uniquely locate OTG state-machine VBUS read: " + str(len(vbus_matches)))
 
 # In B_IDLE, keep the fixed-peripheral PHY state machine polling at its normal
 # two-second cadence so VBUS can be detected without a working edge interrupt.
@@ -369,13 +380,16 @@ poll_insert = (
     "\t\tif (rport->mode == USB_DR_MODE_PERIPHERAL)\n"
     "\t\t\tsch_work = true;\n\n"
 )
-poll_count = text.count(poll_anchor)
+poll_count = otg.count(poll_anchor)
 if poll_count == 1:
-    text = text.replace(poll_anchor, poll_insert + poll_anchor, 1)
-elif text.count(poll_insert + poll_anchor) == 1:
+    if not otg.startswith(poll_insert, otg.find(poll_anchor)):
+        otg = otg.replace(poll_anchor, poll_insert + poll_anchor, 1)
+elif poll_count == 0 and poll_insert in otg:
     pass
 else:
-    raise SystemExit("Could not uniquely locate USB PHY B_IDLE polling point: " + str(poll_count))
+    raise SystemExit("Could not uniquely locate OTG B_IDLE polling point: " + str(poll_count))
+
+text = text[:otg_start] + otg + text[otg_end:]
 
 irq_old = "\tif (!property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st))" + chr(10) + "\t\treturn IRQ_NONE;" + chr(10)
 irq_line = chr(9) + "dev_info(&rport->phy->dev, \"RG353PS USB PHY VBUS-valid IRQ observed" + chr(92) + "n\");" + chr(10)
