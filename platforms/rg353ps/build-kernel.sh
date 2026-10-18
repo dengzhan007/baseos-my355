@@ -393,7 +393,7 @@ text = text[:otg_start] + otg + text[otg_end:]
 
 irq_old = "\tif (!property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st))" + chr(10) + "\t\treturn IRQ_NONE;" + chr(10)
 irq_line = chr(9) + "dev_info(&rport->phy->dev, \"RG353PS USB PHY VBUS-valid IRQ observed" + chr(92) + "n\");" + chr(10)
-irq_new = r irq_old + irq_line
+irq_new = irq_line + irq_old
 irq_count = text.count(irq_old)
 if irq_count == 1:
     text = text.replace(irq_old, irq_new, 1)
@@ -452,7 +452,7 @@ extcon_old = """			if (notify_charger && rphy->edev) {
 							      vbus_attach);
 			}
 """
-extcon_new = r """			if (notify_charger && rphy->edev) {
+extcon_new = r"""			if (notify_charger && rphy->edev) {
 				dev_info(&rport->phy->dev,
 					 "RG353PS extcon notify before: cable=%d vbus=%d usb=%d\\n",
 					 cable, vbus_attach,
@@ -483,7 +483,7 @@ request_old = """			ret = devm_request_threaded_irq(rphy->dev, rport->bvalid_irq
 							rport);
 			if (ret) {
 """
-request_new = r """			ret = devm_request_threaded_irq(rphy->dev, rport->bvalid_irq,
+request_new = r"""			ret = devm_request_threaded_irq(rphy->dev, rport->bvalid_irq,
 							NULL,
 							rockchip_usb2phy_bvalid_irq,
 							IRQF_ONESHOT,
