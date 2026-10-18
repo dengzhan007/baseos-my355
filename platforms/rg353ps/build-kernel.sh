@@ -505,7 +505,7 @@ from pathlib import Path
 
 source = Path("$SRC/drivers/phy/rockchip/phy-rockchip-inno-usb2.c")
 text = source.read_text()
-anchor = "\\tvbus_attach = property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid);" + chr(10)
+anchor = chr(9) + "vbus_attach = property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid);" + chr(10)
 block = """\tif (rport->mode == USB_DR_MODE_PERIPHERAL &&
 \t    (rg353ps_peripheral_samples % 5) == 0) {
 \t\tunsigned int rg353ps_grf_en = 0, rg353ps_grf_st = 0;
