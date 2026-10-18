@@ -426,13 +426,12 @@ def add_irq_entry(match):
     block = match.group(1)
     if "RG353PS BVALID IRQ entry:" in block:
         return block
-    return block + r"""
+    return block + """
 \tbool pending = property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st);
 \tdev_info(&rport->phy->dev,
 \t\t "RG353PS BVALID IRQ entry: irq=%d pending=%d mode=%d state=%d bvalid=%d\\n",
 \t\t irq, pending, rport->mode, rport->state,
 \t\t property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid));
-"""
 text, irq_count = irq_pattern.subn(add_irq_entry, text, count=1)
 if irq_count != 1:
     raise SystemExit("Could not locate BVALID IRQ function/body: " + str(irq_count))
