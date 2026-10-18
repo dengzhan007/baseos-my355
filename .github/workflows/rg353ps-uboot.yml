@@ -45,6 +45,7 @@ jobs:
           sh -n platforms/rg353ps/build-firmware.sh
           sh -n platforms/rg353ps/build-rootfs.sh
           sh -n platforms/rg353ps/rootfs/etc/init.d/rcS
+          sh -n platforms/rg353ps/boot/BASEOS-RUN.SH
           sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-mount-storage
           sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-init-userdata
           sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-frontend-session
