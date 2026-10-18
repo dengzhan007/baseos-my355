@@ -319,8 +319,10 @@ from pathlib import Path
 source = Path("$SRC/drivers/phy/rockchip/phy-rockchip-inno-usb2.c")
 text = source.read_text()
 
-mode_old = "\trport->mode = of_usb_get_dr_mode_by_phy(child_np, -1);\n"
-mode_new = mode_old + '\tdev_info(rphy->dev, "RG353PS USB PHY mode: port=%pOF mode=%d id=%u", child_np, rport->mode, rport->port_id);\n'
+mode_old = "\trport->mode = of_usb_get_dr_mode_by_phy(child_np, -1);" + chr(10)
+mode_format = "RG353PS USB PHY mode: port=%pOF mode=%d id=%u" + chr(92) + "n"
+mode_line = chr(9) + "dev_info(rphy->dev, \"" + mode_format + "\", child_np, rport->mode, rport->port_id);" + chr(10)
+mode_new = mode_old + mode_line
 mode_old_count = text.count(mode_old)
 mode_new_count = text.count(mode_new)
 if mode_old_count == 1:
@@ -330,11 +332,13 @@ elif mode_new_count == 1:
 else:
     raise SystemExit(
         "Could not uniquely locate USB PHY mode assignment: "
-        f"original={mode_old_count}, instrumented={mode_new_count}"
+        + str(mode_old_count) + " original, " + str(mode_new_count) + " instrumented"
     )
 
-vbus_old = "\tvbus_attach = property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid);\n"
-vbus_new = vbus_old + '\tdev_info(&rport->phy->dev, "RG353PS USB PHY OTG sample: mode=%d state=%d bvalid=%d suspended=%d host_extcon=%d", rport->mode, rport->state, vbus_attach, rport->suspended, rphy->edev ? extcon_get_state(rphy->edev, EXTCON_USB_HOST) : -ENODEV);\n'
+vbus_old = "\tvbus_attach = property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid);" + chr(10)
+vbus_format = "RG353PS USB PHY OTG sample: mode=%d state=%d bvalid=%d suspended=%d host_extcon=%d" + chr(92) + "n"
+vbus_line = chr(9) + "dev_info(&rport->phy->dev, \"" + vbus_format + "\", rport->mode, rport->state, vbus_attach, rport->suspended, rphy->edev ? extcon_get_state(rphy->edev, EXTCON_USB_HOST) : -ENODEV);" + chr(10)
+vbus_new = vbus_old + vbus_line
 vbus_old_count = text.count(vbus_old)
 vbus_new_count = text.count(vbus_new)
 if vbus_old_count == 1:
@@ -344,11 +348,12 @@ elif vbus_new_count == 1:
 else:
     raise SystemExit(
         "Could not uniquely locate OTG VBUS-valid sample: "
-        f"original={vbus_old_count}, instrumented={vbus_new_count}"
+        + str(vbus_old_count) + " original, " + str(vbus_new_count) + " instrumented"
     )
 
-irq_old = "\tif (!property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st))\n\t\treturn IRQ_NONE;\n"
-irq_new = irq_old + '\tdev_info(&rport->phy->dev, "RG353PS USB PHY VBUS-valid IRQ observed");\n'
+irq_old = "\tif (!property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st))" + chr(10) + "\t\treturn IRQ_NONE;" + chr(10)
+irq_line = chr(9) + "dev_info(&rport->phy->dev, \"RG353PS USB PHY VBUS-valid IRQ observed" + chr(92) + "n\");" + chr(10)
+irq_new = irq_old + irq_line
 irq_old_count = text.count(irq_old)
 irq_new_count = text.count(irq_new)
 if irq_old_count == 1:
@@ -358,7 +363,7 @@ elif irq_new_count == 1:
 else:
     raise SystemExit(
         "Could not uniquely locate BVALID IRQ check: "
-        f"original={irq_old_count}, instrumented={irq_new_count}"
+        + str(irq_old_count) + " original, " + str(irq_new_count) + " instrumented"
     )
 
 source.write_text(text)
