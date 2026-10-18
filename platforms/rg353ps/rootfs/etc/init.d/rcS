@@ -109,3 +109,25 @@ fi
 # If Function/Mode was held at power-on, keep tty1's diagnostic/frontend
 # selector from starting until USB storage mode exits.
 while [ -e /run/baseos-usb-storage.boot-request ]; do sleep 0.2; done
+
+# Optional boot-partition task for keyboard-free field diagnostics. Invoke via
+# /bin/sh because FAT permissions are not meaningful. Run only after user data
+# is mounted and any requested USB mass-storage session has ended.
+BOOT_TASK=/mnt/boot/BASEOS-RUN.SH
+if [ -f "$BOOT_TASK" ] && [ -r "$BOOT_TASK" ]; then
+  TASK_STAMP="$(date +%Y%m%d-%H%M%S 2>/dev/null)"
+  [ -n "$TASK_STAMP" ] || TASK_STAMP=unknown-time
+  if grep -q " /mnt/SDCARD " /proc/mounts; then
+    TASK_LOG="/mnt/SDCARD/rg353ps-boot-task-$TASK_STAMP.txt"
+  else
+    TASK_LOG="/mnt/boot/rg353ps-boot-task-$TASK_STAMP.txt"
+  fi
+  say "Running boot-partition task: $BOOT_TASK"
+  if /bin/sh "$BOOT_TASK" >"$TASK_LOG" 2>&1; then
+    say "Boot-partition task finished: $TASK_LOG"
+  else
+    TASK_RC=$?
+    say "WARNING: boot-partition task exited with status $TASK_RC; log=$TASK_LOG"
+  fi
+  sync
+fi
