@@ -498,6 +498,79 @@ source.write_text(text)
 print("Applied RG353PS BVALID IRQ entry, registration, and extcon-notify diagnostics")
 PYCODE
 
+      # Log the shared-IRQ path as well: when rphy->irq is configured,
+      # port_irq_init() intentionally skips the per-port otg-bvalid IRQ.
+      # In that case, BVALID events are dispatched through rockchip_usb2phy_irq,
+      # so a bvalid_irq-only log can never appear.
+      python3 - <<PYCODE
+from pathlib import Path
+import re
+
+source = Path("$SRC/drivers/phy/rockchip/phy-rockchip-inno-usb2.c")
+text = source.read_text()
+
+def inject_function(signature, body, label):
+    global text
+    pattern = re.compile(re.escape(signature) + r"\s*\{")
+    matches = list(pattern.finditer(text))
+    if len(matches) != 1:
+        raise SystemExit(f"Could not uniquely locate {label}: {len(matches)}")
+    match = matches[0]
+    if label in text[match.start():match.start() + 900]:
+        return
+    insert_at = match.end()
+    text = text[:insert_at] + "\n" + body + text[insert_at:]
+
+inject_function(
+    "static int rockchip_usb2phy_probe(struct platform_device *pdev)",
+    '\tdev_info(dev, "RG353PS PHY probe entry: irq=%d\\n", platform_get_irq(pdev, 0));',
+    "RG353PS PHY probe entry:",
+)
+
+inject_function(
+    "static irqreturn_t rockchip_usb2phy_irq(int irq, void *data)",
+    '\tstruct rockchip_usb2phy *rphy = data;\n'
+    '\tdev_info(rphy->dev, "RG353PS shared PHY IRQ entry: irq=%d configured_irq=%d num_ports=%u\\n",\n'
+    '\t\t irq, rphy->irq, rphy->phy_cfg->num_ports);',
+    "RG353PS shared PHY IRQ entry:",
+)
+
+inject_function(
+    "static int rockchip_usb2phy_port_irq_init(struct rockchip_usb2phy *rphy,",
+    '\tdev_info(rphy->dev, "RG353PS port IRQ init entry: port_id=%u mode=%d shared_irq=%d\\n",\n'
+    '\t\t rport->port_id, rport->mode, rphy->irq);',
+    "RG353PS port IRQ init entry:",
+)
+
+# This early return is the critical fork: a positive shared IRQ bypasses
+# registration of the individual otg-bvalid IRQ.
+early_old = """\tif (rphy->irq > 0)
+\t\treturn 0;
+"""
+early_new = """\tif (rphy->irq > 0) {
+\t\tdev_info(rphy->dev,
+\t\t\t "RG353PS port IRQ init: using shared IRQ=%d; skipping per-port IRQ registration\\n",
+\t\t\t rphy->irq);
+\t\treturn 0;
+\t}
+"""
+if text.count(early_old) == 1:
+    text = text.replace(early_old, early_new, 1)
+elif text.count(early_new) != 1:
+    raise SystemExit("Could not uniquely instrument shared IRQ early return")
+
+# Trace the state-machine work entry and the BVALID value it reads.
+inject_function(
+    "static void rockchip_usb2phy_otg_sm_work(struct work_struct *work)",
+    '\tdev_info(container_of(work, struct rockchip_usb2phy_port, otg_sm_work.work)->phy->dev.parent, '
+    '"RG353PS OTG state-machine entry\\n");',
+    "RG353PS OTG state-machine entry",
+)
+
+source.write_text(text)
+print("Applied RG353PS probe/shared-IRQ/OTG state-machine entry diagnostics")
+PYCODE
+
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
