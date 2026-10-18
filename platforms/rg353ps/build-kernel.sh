@@ -311,8 +311,8 @@ source.write_text(text)
 print("Applied checked RG353PS USB2 peripheral PHY fix (5 state-machine call sites)")
 PYCODE
 
-      # Report actual USB PHY peripheral-mode and VBUS-detect decisions.
-      # This is observational only: do not force VBUS, ID, or controller role.
+      # Instrument the RG353PS peripheral PHY and re-sample VBUS even when
+      # the BVALID IRQ does not fire. Keep edits anchored to unique source code.
       python3 - <<PYCODE
 from pathlib import Path
 
@@ -324,121 +324,74 @@ mode_format = "RG353PS USB PHY mode: port=%pOF mode=%d id=%u" + chr(92) + "n"
 mode_line = chr(9) + "dev_info(rphy->dev, \"" + mode_format + "\", child_np, rport->mode, rport->port_id);" + chr(10)
 mode_new = mode_old + mode_line
 mode_old_count = text.count(mode_old)
-mode_new_count = text.count(mode_new)
 if mode_old_count == 1:
     text = text.replace(mode_old, mode_new, 1)
-elif mode_new_count == 1:
+elif text.count(mode_new) == 1:
     pass
 else:
-    raise SystemExit(
-        "Could not uniquely locate USB PHY mode assignment: "
-        + str(mode_old_count) + " original, " + str(mode_new_count) + " instrumented"
-    )
+    raise SystemExit("Could not uniquely locate USB PHY mode assignment: " + str(mode_old_count))
+
+sample_decl_old = "\tbool vbus_attach, sch_work, notify_charger;" + chr(10)
+sample_decl_new = sample_decl_old + "\tstatic unsigned int rg353ps_peripheral_samples;" + chr(10)
+decl_count = text.count(sample_decl_old)
+if decl_count == 1:
+    text = text.replace(sample_decl_old, sample_decl_new, 1)
+elif text.count(sample_decl_new) == 1:
+    pass
+else:
+    raise SystemExit("Could not uniquely locate USB PHY sample counter declaration: " + str(decl_count))
 
 vbus_old = "\tvbus_attach = property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid);" + chr(10)
 vbus_format = "RG353PS USB PHY OTG sample: mode=%d state=%d bvalid=%d suspended=%d host_extcon=%d" + chr(92) + "n"
-vbus_line = chr(9) + "dev_info(&rport->phy->dev, \"" + vbus_format + "\", rport->mode, rport->state, vbus_attach, rport->suspended, rphy->edev ? extcon_get_state(rphy->edev, EXTCON_USB_HOST) : -ENODEV);" + chr(10)
+vbus_dev_info = (
+    "dev_info(&rport->phy->dev, \"" + vbus_format
+    + "\", rport->mode, rport->state, vbus_attach, rport->suspended, "
+    + "rphy->edev ? extcon_get_state(rphy->edev, EXTCON_USB_HOST) : -ENODEV);"
+)
+vbus_line = (
+    chr(9) + "if (rport->mode != USB_DR_MODE_PERIPHERAL ||" + chr(10) +
+    chr(9) + "    (++rg353ps_peripheral_samples % 5) == 1)" + chr(10) +
+    chr(9) * 2 + vbus_dev_info + chr(10)
+)
 vbus_new = vbus_old + vbus_line
 vbus_old_count = text.count(vbus_old)
-vbus_new_count = text.count(vbus_new)
 if vbus_old_count == 1:
     text = text.replace(vbus_old, vbus_new, 1)
-elif vbus_new_count == 1:
+elif text.count(vbus_new) == 1:
     pass
 else:
-    raise SystemExit(
-        "Could not uniquely locate OTG VBUS-valid sample: "
-        + str(vbus_old_count) + " original, " + str(vbus_new_count) + " instrumented"
-    )
+    raise SystemExit("Could not uniquely locate OTG VBUS-valid sample: " + str(vbus_old_count))
 
-irq_old = "\tif (!property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st))" + chr(10) + "\t\treturn IRQ_NONE;" + chr(10)
-irq_line = chr(9) + "dev_info(&rport->phy->dev, \"RG353PS USB PHY VBUS-valid IRQ observed" + chr(92) + "n\");" + chr(10)
-irq_new = irq_old + irq_line
-irq_old_count = text.count(irq_old)
-irq_new_count = text.count(irq_new)
-if irq_old_count == 1:
-    text = text.replace(irq_old, irq_new, 1)
-elif irq_new_count == 1:
-    pass
-else:
-    raise SystemExit(
-        "Could not uniquely locate BVALID IRQ check: "
-        + str(irq_old_count) + " original, " + str(irq_new_count) + " instrumented"
-    )
-
-source.write_text(text)
-print("Added checked RG353PS USB PHY mode/VBUS/IRQ diagnostics")
-PYCODE
-
-      # Fixed-peripheral ports must not depend solely on the BVALID IRQ.
-      # Re-sample VBUS from B_IDLE every 2 seconds; rate-limit the diagnostic
-      # because the state machine now remains active while no cable is present.
-      python3 - <<PYCODE
-from pathlib import Path
-
-source = Path("$SRC/drivers/phy/rockchip/phy-rockchip-inno-usb2.c")
-text = source.read_text()
-start = text.index("static void rockchip_usb2phy_otg_sm_work(struct work_struct *work)")
-end = text.index("static const char *chg_to_string", start)
-fn = text[start:end]
-
+# In B_IDLE, keep the fixed-peripheral PHY state machine polling at its normal
+# two-second cadence so VBUS can be detected without a working edge interrupt.
 poll_anchor = "\t\tif (rport->vbus_attached != vbus_attach) {"
 poll_insert = (
     "\t\tif (rport->mode == USB_DR_MODE_PERIPHERAL)\n"
     "\t\t\tsch_work = true;\n\n"
 )
-poll_old_count = fn.count(poll_anchor)
-if poll_old_count == 1:
-    fn = fn.replace(poll_anchor, poll_insert + poll_anchor, 1)
-elif poll_insert + poll_anchor in fn:
+poll_count = text.count(poll_anchor)
+if poll_count == 1:
+    text = text.replace(poll_anchor, poll_insert + poll_anchor, 1)
+elif text.count(poll_insert + poll_anchor) == 1:
     pass
 else:
-    raise SystemExit(
-        "Could not uniquely locate USB PHY B_IDLE polling point: "
-        + str(poll_old_count)
-    )
+    raise SystemExit("Could not uniquely locate USB PHY B_IDLE polling point: " + str(poll_count))
 
-counter_anchor = "\tbool vbus_attach, sch_work, notify_charger;\n"
-counter_insert = counter_anchor + "\tstatic unsigned int rg353ps_peripheral_samples;\n"
-counter_old_count = fn.count(counter_anchor)
-if counter_old_count == 1:
-    fn = fn.replace(counter_anchor, counter_insert, 1)
-elif counter_insert in fn:
+irq_old = "\tif (!property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st))" + chr(10) + "\t\treturn IRQ_NONE;" + chr(10)
+irq_line = chr(9) + "dev_info(&rport->phy->dev, \"RG353PS USB PHY VBUS-valid IRQ observed" + chr(92) + "n\");" + chr(10)
+irq_new = irq_old + irq_line
+irq_count = text.count(irq_old)
+if irq_count == 1:
+    text = text.replace(irq_old, irq_new, 1)
+elif text.count(irq_new) == 1:
     pass
 else:
-    raise SystemExit(
-        "Could not uniquely locate USB PHY sample counter point: "
-        + str(counter_old_count)
-    )
+    raise SystemExit("Could not uniquely locate BVALID IRQ check: " + str(irq_count))
 
-sample_lines = fn.splitlines(keepends=True)
-sample_indexes = [
-    index for index, line in enumerate(sample_lines)
-    if "RG353PS USB PHY OTG sample:" in line
-]
-if len(sample_indexes) != 1:
-    raise SystemExit(
-        "Could not uniquely locate USB PHY sample diagnostic line: "
-        + str(len(sample_indexes))
-    )
-sample_index = sample_indexes[0]
-sample_line = sample_lines[sample_index]
-preceding = "".join(sample_lines[max(0, sample_index - 2):sample_index])
-if "++rg353ps_peripheral_samples" not in preceding:
-    if not sample_line.lstrip().startswith("dev_info("):
-        raise SystemExit("Unexpected format for USB PHY sample diagnostic line")
-    indent = sample_line[:len(sample_line) - len(sample_line.lstrip())]
-    sample_lines[sample_index:sample_index + 1] = [
-        indent + "if (rport->mode != USB_DR_MODE_PERIPHERAL ||\n",
-        indent + "    (++rg353ps_peripheral_samples % 5) == 1)\n",
-        indent + sample_line.lstrip(),
-    ]
-fn = "".join(sample_lines)
-
-text = text[:start] + fn + text[end:]
 source.write_text(text)
-print("Applied fixed-peripheral B_IDLE VBUS polling and rate-limited sampling")
+print("Applied RG353PS peripheral VBUS polling and rate-limited PHY diagnostics")
 PYCODE
+
 
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
