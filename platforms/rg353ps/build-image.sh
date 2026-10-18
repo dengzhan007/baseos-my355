@@ -90,7 +90,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
     mcopy -i "$BOOTFS" /work/kernel/output/Image ::/Image
     mcopy -i "$BOOTFS" /work/kernel/output/rk3566-anbernic-rg353ps.dtb ::/device_trees/rk3566-anbernic-rg353ps.dtb
     mcopy -o -i "$BOOTFS" /work/rootfs/etc/baseos.conf ::/baseos.conf
-
+    # Install the replaceable keyboard-free diagnostic task on the FAT boot partition.\n    mcopy -o -i "$BOOTFS" /work/boot/BASEOS-RUN.SH ::/BASEOS-RUN.SH\n
     cat > /tmp/extlinux.conf <<EOF
 LABEL BaseOS-RG353PS
   MENU LABEL BaseOS RG353PS experimental bring-up
