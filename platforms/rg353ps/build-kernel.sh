@@ -407,6 +407,107 @@ print("Applied RG353PS peripheral VBUS polling and rate-limited PHY diagnostics"
 PYCODE
 
 
+      # Add targeted BVALID IRQ and extcon diagnostics to distinguish
+      # "IRQ never fires" from "IRQ fires but PHY status is not valid".
+      python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/drivers/phy/rockchip/phy-rockchip-inno-usb2.c")
+text = source.read_text()
+
+irq_old = """static irqreturn_t rockchip_usb2phy_bvalid_irq(int irq, void *data)
+{
+	struct rockchip_usb2phy_port *rport = data;
+	struct rockchip_usb2phy *rphy = dev_get_drvdata(rport->phy->dev.parent);
+
+	if (!property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st))
+		return IRQ_NONE;
+"""
+irq_new = """static irqreturn_t rockchip_usb2phy_bvalid_irq(int irq, void *data)
+{
+	struct rockchip_usb2phy_port *rport = data;
+	struct rockchip_usb2phy *rphy = dev_get_drvdata(rport->phy->dev.parent);
+	bool pending = property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st);
+
+	dev_info(&rport->phy->dev,
+		 "RG353PS BVALID IRQ entry: irq=%d pending=%d mode=%d state=%d bvalid=%d
+",
+		 irq, pending, rport->mode, rport->state,
+		 property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid));
+
+	if (!pending)
+		return IRQ_NONE;
+"""
+irq_count = text.count(irq_old)
+if irq_count == 1:
+    text = text.replace(irq_old, irq_new, 1)
+elif text.count(irq_new) != 1:
+    raise SystemExit("Could not uniquely patch BVALID IRQ entry: " + str(irq_count))
+
+extcon_old = """			if (notify_charger && rphy->edev) {
+				extcon_set_state_sync(rphy->edev,
+							cable, vbus_attach);
+				if (cable == EXTCON_CHG_USB_SDP)
+					extcon_set_state_sync(rphy->edev,
+							      EXTCON_USB,
+							      vbus_attach);
+			}
+"""
+extcon_new = """			if (notify_charger && rphy->edev) {
+				dev_info(&rport->phy->dev,
+					 "RG353PS extcon notify before: cable=%d vbus=%d usb=%d
+",
+					 cable, vbus_attach,
+					 extcon_get_state(rphy->edev, EXTCON_USB));
+				extcon_set_state_sync(rphy->edev,
+							cable, vbus_attach);
+				if (cable == EXTCON_CHG_USB_SDP)
+					extcon_set_state_sync(rphy->edev,
+							      EXTCON_USB,
+							      vbus_attach);
+				dev_info(&rport->phy->dev,
+					 "RG353PS extcon notify after: cable=%d vbus=%d usb=%d
+",
+					 cable, vbus_attach,
+					 extcon_get_state(rphy->edev, EXTCON_USB));
+			}
+"""
+extcon_count = text.count(extcon_old)
+if extcon_count == 1:
+    text = text.replace(extcon_old, extcon_new, 1)
+elif text.count(extcon_new) != 1:
+    raise SystemExit("Could not uniquely patch extcon notification block: " + str(extcon_count))
+
+request_old = """			ret = devm_request_threaded_irq(rphy->dev, rport->bvalid_irq,
+							NULL,
+							rockchip_usb2phy_bvalid_irq,
+							IRQF_ONESHOT,
+							"rockchip_usb2phy_bvalid",
+							rport);
+			if (ret) {
+"""
+request_new = """			ret = devm_request_threaded_irq(rphy->dev, rport->bvalid_irq,
+							NULL,
+							rockchip_usb2phy_bvalid_irq,
+							IRQF_ONESHOT,
+							"rockchip_usb2phy_bvalid",
+							rport);
+			dev_info(rphy->dev,
+				 "RG353PS BVALID IRQ request: irq=%d result=%d mode=%d
+",
+				 rport->bvalid_irq, ret, rport->mode);
+			if (ret) {
+"""
+request_count = text.count(request_old)
+if request_count == 1:
+    text = text.replace(request_old, request_new, 1)
+elif text.count(request_new) != 1:
+    raise SystemExit("Could not uniquely patch BVALID IRQ request logging: " + str(request_count))
+
+source.write_text(text)
+print("Applied RG353PS BVALID IRQ entry, registration, and extcon-notify diagnostics")
+PYCODE
+
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
