@@ -498,36 +498,45 @@ source.write_text(text)
 print("Applied RG353PS BVALID IRQ entry, registration, and extcon-notify diagnostics")
 PYCODE
 
-      # Capture RK3568 USB2PHY GRF state while the OTG state machine polls.
-      # These are read-only diagnostics for VBUS-valid and BVALID interrupt state.
+      # Capture RK3568 USB2PHY GRF state only inside the OTG state machine.
+      # Keep the counter in the same function scope and escape the C newline
+      # through the shell heredoc safely.
       python3 - <<PYCODE
 from pathlib import Path
+import re
 
 source = Path("$SRC/drivers/phy/rockchip/phy-rockchip-inno-usb2.c")
 text = source.read_text()
+otg_start = text.index("static void rockchip_usb2phy_otg_sm_work(struct work_struct *work)")
+otg_end = text.index("static const char *chg_to_string", otg_start)
+otg = text[otg_start:otg_end]
 anchor = chr(9) + "vbus_attach = property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid);" + chr(10)
-block = """\tif (rport->mode == USB_DR_MODE_PERIPHERAL &&
-\t    (rg353ps_peripheral_samples % 5) == 0) {
-\t\tunsigned int rg353ps_grf_en = 0, rg353ps_grf_st = 0;
-\t\tunsigned int rg353ps_grf_clr = 0, rg353ps_grf_utmi = 0;
-\t\tint rg353ps_ret_en, rg353ps_ret_st, rg353ps_ret_clr, rg353ps_ret_utmi;
-
-\t\trg353ps_ret_en = regmap_read(rphy->grf, 0x0080, &rg353ps_grf_en);
-\t\trg353ps_ret_st = regmap_read(rphy->grf, 0x0084, &rg353ps_grf_st);
-\t\trg353ps_ret_clr = regmap_read(rphy->grf, 0x0088, &rg353ps_grf_clr);
-\t\trg353ps_ret_utmi = regmap_read(rphy->grf, 0x00c0, &rg353ps_grf_utmi);
-\t\tdev_info(&rport->phy->dev,
-\t\t\t "RG353PS GRF sample: en=%d:%08x status=%d:%08x clear=%d:%08x utmi=%d:%08x\\n",
-\t\t\t rg353ps_ret_en, rg353ps_grf_en, rg353ps_ret_st, rg353ps_grf_st,
-\t\t\t rg353ps_ret_clr, rg353ps_grf_clr, rg353ps_ret_utmi, rg353ps_grf_utmi);
-\t}
-"""
-if text.count(anchor) == 1:
-    text = text.replace(anchor, anchor + block, 1)
-elif text.count("RG353PS GRF sample:") != 1:
-    raise SystemExit("Could not uniquely locate OTG VBUS read for GRF diagnostics")
+newline = chr(92) + "n"
+block = (
+    chr(9) + "if (rport->mode == USB_DR_MODE_PERIPHERAL && " +
+    "(rg353ps_peripheral_samples % 5) == 0) {" + chr(10) +
+    chr(9) * 2 + "unsigned int rg353ps_grf_en = 0, rg353ps_grf_st = 0;" + chr(10) +
+    chr(9) * 2 + "unsigned int rg353ps_grf_clr = 0, rg353ps_grf_utmi = 0;" + chr(10) +
+    chr(9) * 2 + "int rg353ps_ret_en, rg353ps_ret_st, rg353ps_ret_clr, rg353ps_ret_utmi;" + chr(10) + chr(10) +
+    chr(9) * 2 + "rg353ps_ret_en = regmap_read(rphy->grf, 0x0080, &rg353ps_grf_en);" + chr(10) +
+    chr(9) * 2 + "rg353ps_ret_st = regmap_read(rphy->grf, 0x0084, &rg353ps_grf_st);" + chr(10) +
+    chr(9) * 2 + "rg353ps_ret_clr = regmap_read(rphy->grf, 0x0088, &rg353ps_grf_clr);" + chr(10) +
+    chr(9) * 2 + "rg353ps_ret_utmi = regmap_read(rphy->grf, 0x00c0, &rg353ps_grf_utmi);" + chr(10) +
+    chr(9) * 2 + "dev_info(&rport->phy->dev," + chr(10) +
+    chr(9) * 3 + '"RG353PS GRF sample: en=%d:%08x status=%d:%08x clear=%d:%08x utmi=%d:%08x' + newline + '",' + chr(10) +
+    chr(9) * 3 + "rg353ps_ret_en, rg353ps_grf_en, rg353ps_ret_st, rg353ps_grf_st," + chr(10) +
+    chr(9) * 3 + "rg353ps_ret_clr, rg353ps_grf_clr, rg353ps_ret_utmi, rg353ps_grf_utmi);" + chr(10) +
+    chr(9) + "}" + chr(10)
+)
+count = otg.count(anchor)
+if count == 1:
+    if "RG353PS GRF sample:" not in otg:
+        otg = otg.replace(anchor, anchor + block, 1)
+elif otg.count("RG353PS GRF sample:") != 1:
+    raise SystemExit("Could not uniquely locate OTG VBUS read for GRF diagnostics: " + str(count))
+text = text[:otg_start] + otg + text[otg_end:]
 source.write_text(text)
-print("Applied RG353PS read-only USB2PHY GRF diagnostics")
+print("Applied read-only RK3568 USB2PHY GRF diagnostics inside OTG state machine")
 PYCODE
 
       # Log the shared-IRQ path as well: when rphy->irq is configured,
