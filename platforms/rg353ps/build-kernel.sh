@@ -63,9 +63,10 @@ cat "$PLATFORM_DIR"/kernel/patches/rk3566/*.patch \
     "$PLATFORM_DIR"/kernel/patches/mainline-rockchip/*.patch > "$PATCHSET"
 PATCH_SHA="$(baseos_sha256 "$PATCHSET")"
 CONFIG_SHA="$(baseos_sha256 "$PLATFORM_DIR/kernel/config/linux.aarch64.conf")"
-printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+BUILDER_SHA="$(baseos_sha256 "$PLATFORM_DIR/build-kernel.sh")"
+printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
   "$KERNEL_VERSION" "$ROCKNIX_REF" "$PATCH_SHA" "$CONFIG_SHA" \
-  "$REGDB_SHA" "$REGDB_SIG_SHA" "$REGDB_CERT_SHA" > "$INPUT_KEY_FILE"
+  "$REGDB_SHA" "$REGDB_SIG_SHA" "$REGDB_CERT_SHA" "$BUILDER_SHA" > "$INPUT_KEY_FILE"
 INPUT_KEY="$(baseos_sha256 "$INPUT_KEY_FILE")"
 
 echo "== building Linux $KERNEL_VERSION for RG353PS =="
@@ -238,6 +239,76 @@ if count != 1:
     raise SystemExit(f"Expected exactly one Hantro CAPTURE debug anchor, found {count}")
 source.write_text(text.replace(needle, replacement, 1))
 print("Applied checked Hantro JPEG CAPTURE colorimetry fix")
+PYCODE
+
+      # Keep the peripheral-only RG353PS USB2 PHY available for VBUS detection.
+      # These checked replacements are part of the build rather than a hand-written
+      # unified diff, so source context/count mismatches fail with an explicit error.
+      python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/drivers/phy/rockchip/phy-rockchip-inno-usb2.c")
+text = source.read_text()
+
+marker = """static void rockchip_usb2phy_otg_sm_work(struct work_struct *work)
+{
+"""
+helper_and_marker = """/*
+ * Peripheral-only ports must stay available for VBUS detection and gadget
+ * setup. Avoid state-machine power-off transitions in this mode.
+ */
+static void rockchip_usb2phy_sm_power_off(struct rockchip_usb2phy_port *rport)
+{
+	if (rport->mode == USB_DR_MODE_PERIPHERAL)
+		return;
+
+	rockchip_usb2phy_power_off(rport->phy);
+}
+
+static void rockchip_usb2phy_otg_sm_work(struct work_struct *work)
+{
+"""
+if text.count(marker) != 1:
+    raise SystemExit(
+        "Could not uniquely locate Rockchip USB2 OTG state machine: "
+        f"found {text.count(marker)}"
+    )
+if "static void rockchip_usb2phy_sm_power_off(" in text:
+    raise SystemExit("USB2 peripheral PHY helper already exists unexpectedly")
+text = text.replace(marker, helper_and_marker, 1)
+
+otg_start = text.index("static void rockchip_usb2phy_otg_sm_work")
+otg_end = text.index("static const char *chg_to_string", otg_start)
+otg = text[otg_start:otg_end]
+otg_count = otg.count("rockchip_usb2phy_power_off(rport->phy);")
+if otg_count != 4:
+    raise SystemExit(
+        "Unexpected power-off call count in USB2 OTG state machine: "
+        f"{otg_count}, expected 4"
+    )
+otg = otg.replace(
+    "rockchip_usb2phy_power_off(rport->phy);",
+    "rockchip_usb2phy_sm_power_off(rport);"
+)
+text = text[:otg_start] + otg + text[otg_end:]
+
+chg_start = text.index("static void rockchip_chg_detect_work")
+chg_end = text.index("static void rockchip_usb2phy_sm_work", chg_start)
+chg = text[chg_start:chg_end]
+chg_count = chg.count("rockchip_usb2phy_power_off(rport->phy);")
+if chg_count != 1:
+    raise SystemExit(
+        "Unexpected power-off call count in USB2 charger detection: "
+        f"{chg_count}, expected 1"
+    )
+chg = chg.replace(
+    "rockchip_usb2phy_power_off(rport->phy);",
+    "rockchip_usb2phy_sm_power_off(rport);"
+)
+text = text[:chg_start] + chg + text[chg_end:]
+
+source.write_text(text)
+print("Applied checked RG353PS USB2 peripheral PHY fix (5 state-machine call sites)")
 PYCODE
 
       # cfg80211 is built into this kernel and can request the regdb before
