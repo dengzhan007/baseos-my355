@@ -527,9 +527,8 @@ inject_function(
 
 inject_function(
     "static irqreturn_t rockchip_usb2phy_irq(",
-    '\tstruct rockchip_usb2phy *rphy = data;\n'
-    '\tdev_info(rphy->dev, "RG353PS shared PHY IRQ entry: irq=%d configured_irq=%d num_ports=%u\\n",\n'
-    '\t\t irq, rphy->irq, rphy->phy_cfg->num_ports);',
+    '\tdev_info(((struct rockchip_usb2phy *)data)->dev, "RG353PS shared PHY IRQ entry: irq=%d configured_irq=%d num_ports=%u\\n",\n'
+    '\t\t irq, ((struct rockchip_usb2phy *)data)->irq, ((struct rockchip_usb2phy *)data)->phy_cfg->num_ports);',
     "RG353PS shared PHY IRQ entry:",
 )
 
@@ -558,8 +557,7 @@ elif text.count(early_new) != 1:
 
 inject_function(
     "static void rockchip_usb2phy_otg_sm_work(",
-    '\tstruct rockchip_usb2phy_port *rport = container_of(work, struct rockchip_usb2phy_port, otg_sm_work.work);\n'
-    '\tdev_info(&rport->phy->dev, "RG353PS OTG state-machine entry\\n");',
+    '\tdev_info(&container_of(work, struct rockchip_usb2phy_port, otg_sm_work.work)->phy->dev, "RG353PS OTG state-machine entry\\n");',
     "RG353PS OTG state-machine entry",
 )
 
