@@ -521,20 +521,20 @@ def inject_function(prefix, body, label):
 
 inject_function(
     "static int rockchip_usb2phy_probe(",
-    "\tdev_info(&pdev->dev, \"RG353PS PHY probe entry\\n\");",
+    "\tdev_info(&pdev->dev, \"RG353PS PHY probe entry\\\\n\");",
     "RG353PS PHY probe entry:",
 )
 
 inject_function(
     "static irqreturn_t rockchip_usb2phy_irq(",
-    "\tdev_info(((struct rockchip_usb2phy *)data)->dev, \"RG353PS shared PHY IRQ entry: irq=%d configured_irq=%d num_ports=%u\\n\",\n"
+    "\tdev_info(((struct rockchip_usb2phy *)data)->dev, \"RG353PS shared PHY IRQ entry: irq=%d configured_irq=%d num_ports=%u\\\\n\",\n"
     "\t\t irq, ((struct rockchip_usb2phy *)data)->irq, ((struct rockchip_usb2phy *)data)->phy_cfg->num_ports);",
     "RG353PS shared PHY IRQ entry:",
 )
 
 inject_function(
     "static int rockchip_usb2phy_port_irq_init(",
-    "\tdev_info(rphy->dev, \"RG353PS port IRQ init entry: port_id=%u mode=%d shared_irq=%d\\n\",\n"
+    "\tdev_info(rphy->dev, \"RG353PS port IRQ init entry: port_id=%u mode=%d shared_irq=%d\\\\n\",\n"
     "\t\t rport->port_id, rport->mode, rphy->irq);",
     "RG353PS port IRQ init entry:",
 )
@@ -545,7 +545,7 @@ early_old = """\tif (rphy->irq > 0)
 """
 early_new = """\tif (rphy->irq > 0) {
 \t\tdev_info(rphy->dev,
-\t\t\t "RG353PS port IRQ init: using shared IRQ=%d; skipping per-port IRQ registration\\n",
+\t\t\t "RG353PS port IRQ init: using shared IRQ=%d; skipping per-port IRQ registration\\\\n",
 \t\t\t rphy->irq);
 \t\treturn 0;
 \t}
@@ -557,7 +557,7 @@ elif text.count(early_new) != 1:
 
 inject_function(
     "static void rockchip_usb2phy_otg_sm_work(",
-    "\tdev_info(&container_of(work, struct rockchip_usb2phy_port, otg_sm_work.work)->phy->dev, \"RG353PS OTG state-machine entry\\n\");",
+    "\tdev_info(&container_of(work, struct rockchip_usb2phy_port, otg_sm_work.work)->phy->dev, \"RG353PS OTG state-machine entry\\\\n\");",
     "RG353PS OTG state-machine entry",
 )
 
