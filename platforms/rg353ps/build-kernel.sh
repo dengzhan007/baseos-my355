@@ -500,8 +500,7 @@ PYCODE
 
       # Log the shared-IRQ path as well: when rphy->irq is configured,
       # port_irq_init() intentionally skips the per-port otg-bvalid IRQ.
-      # In that case, BVALID events are dispatched through rockchip_usb2phy_irq,
-      # so a bvalid_irq-only log can never appear.
+      # In that case, BVALID events are dispatched through rockchip_usb2phy_irq.
       python3 - <<PYCODE
 from pathlib import Path
 import re
@@ -509,26 +508,25 @@ import re
 source = Path("$SRC/drivers/phy/rockchip/phy-rockchip-inno-usb2.c")
 text = source.read_text()
 
-def inject_function(signature, body, label):
+def inject_function(prefix, body, label):
     global text
-    pattern = re.compile(re.escape(signature) + r"\s*\{")
+    pattern = re.compile(re.escape(prefix) + r".*?\)\s*\{", re.S)
     matches = list(pattern.finditer(text))
     if len(matches) != 1:
         raise SystemExit(f"Could not uniquely locate {label}: {len(matches)}")
     match = matches[0]
-    if label in text[match.start():match.start() + 900]:
+    if label in text[match.start():match.start() + 1200]:
         return
-    insert_at = match.end()
-    text = text[:insert_at] + "\n" + body + text[insert_at:]
+    text = text[:match.end()] + "\n" + body + text[match.end():]
 
 inject_function(
-    "static int rockchip_usb2phy_probe(struct platform_device *pdev)",
-    '\tdev_info(dev, "RG353PS PHY probe entry: irq=%d\\n", platform_get_irq(pdev, 0));',
+    "static int rockchip_usb2phy_probe(",
+    '\tdev_info(&pdev->dev, "RG353PS PHY probe entry\\n");',
     "RG353PS PHY probe entry:",
 )
 
 inject_function(
-    "static irqreturn_t rockchip_usb2phy_irq(int irq, void *data)",
+    "static irqreturn_t rockchip_usb2phy_irq(",
     '\tstruct rockchip_usb2phy *rphy = data;\n'
     '\tdev_info(rphy->dev, "RG353PS shared PHY IRQ entry: irq=%d configured_irq=%d num_ports=%u\\n",\n'
     '\t\t irq, rphy->irq, rphy->phy_cfg->num_ports);',
@@ -536,14 +534,13 @@ inject_function(
 )
 
 inject_function(
-    "static int rockchip_usb2phy_port_irq_init(struct rockchip_usb2phy *rphy,",
+    "static int rockchip_usb2phy_port_irq_init(",
     '\tdev_info(rphy->dev, "RG353PS port IRQ init entry: port_id=%u mode=%d shared_irq=%d\\n",\n'
     '\t\t rport->port_id, rport->mode, rphy->irq);',
     "RG353PS port IRQ init entry:",
 )
 
-# This early return is the critical fork: a positive shared IRQ bypasses
-# registration of the individual otg-bvalid IRQ.
+# A positive shared IRQ intentionally bypasses per-port otg-bvalid registration.
 early_old = """\tif (rphy->irq > 0)
 \t\treturn 0;
 """
@@ -559,11 +556,10 @@ if text.count(early_old) == 1:
 elif text.count(early_new) != 1:
     raise SystemExit("Could not uniquely instrument shared IRQ early return")
 
-# Trace the state-machine work entry and the BVALID value it reads.
 inject_function(
-    "static void rockchip_usb2phy_otg_sm_work(struct work_struct *work)",
-    '\tdev_info(container_of(work, struct rockchip_usb2phy_port, otg_sm_work.work)->phy->dev.parent, '
-    '"RG353PS OTG state-machine entry\\n");',
+    "static void rockchip_usb2phy_otg_sm_work(",
+    '\tstruct rockchip_usb2phy_port *rport = container_of(work, struct rockchip_usb2phy_port, otg_sm_work.work);\n'
+    '\tdev_info(&rport->phy->dev, "RG353PS OTG state-machine entry\\n");',
     "RG353PS OTG state-machine entry",
 )
 
