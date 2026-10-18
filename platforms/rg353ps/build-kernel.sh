@@ -311,7 +311,7 @@ source.write_text(text)
 print("Applied checked RG353PS USB2 peripheral PHY fix (5 state-machine call sites)")
 PYCODE
 
-      # Report the PHY's actual peripheral-mode and VBUS-detect decisions.
+      # Report actual USB PHY peripheral-mode and VBUS-detect decisions.
       # This is observational only: do not force VBUS, ID, or controller role.
       python3 - <<PYCODE
 from pathlib import Path
