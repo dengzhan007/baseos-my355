@@ -33,6 +33,46 @@ log() {
   printf 'baseos-usb-storage: %s\n' "$*" > /dev/kmsg 2>/dev/null || :
 }
 is_mounted() { grep -q " $1 " /proc/mounts; }
+read_usb_attr() {
+  p="$1"
+  [ -r "$p" ] || return 0
+  value="$(cat "$p" 2>/dev/null | tr '\n' ' ')"
+  log "USB sysfs: $p=$value"
+}
+dump_usb_status() {
+  # Read-only snapshots: expose role/VBUS/PHY state without changing hardware.
+  for p in \
+    "/sys/class/udc/$UDC/state" \
+    "/sys/class/udc/$UDC/current_speed" \
+    "/sys/class/udc/$UDC/maximum_speed" \
+    "/sys/class/udc/$UDC/function" \
+    "/sys/class/udc/$UDC/is_otg" \
+    "/sys/class/udc/$UDC/soft_connect" \
+    /sys/class/usb_role/*/role \
+    /sys/class/extcon/*/name \
+    /sys/class/extcon/*/state \
+    /sys/class/typec/*/data_role \
+    /sys/class/typec/*/power_role \
+    /sys/class/phy/*/type \
+    /sys/class/phy/*/power/control \
+    /sys/class/phy/*/power/runtime_status \
+    "/sys/bus/platform/devices/$UDC/dr_mode" \
+    "/sys/bus/platform/devices/$UDC/role" \
+    "/sys/bus/platform/devices/$UDC/status" \
+    "/sys/bus/platform/devices/$UDC/power/control" \
+    "/sys/bus/platform/devices/$UDC/power/runtime_status"; do
+    read_usb_attr "$p"
+  done
+  for d in /sys/bus/platform/devices/*phy*; do
+    [ -d "$d" ] || continue
+    case "$d" in *usb2phy*|*usb-phy*|*phy*) ;; *) continue ;; esac
+    driver="$(readlink "$d/driver" 2>/dev/null || echo none)"
+    log "USB PHY device: $d driver=$driver"
+    for attr in mode otg_mode vbus_det_en vbus_det_en_ctrl power/control power/runtime_status; do
+      read_usb_attr "$d/$attr"
+    done
+  done
+}
 snapshot() {
   log "===== diagnostic snapshot: $1 ====="
   log "mountpoint=$MOUNTPOINT device=$DEVICE fstype=$FSTYPE udc=$UDC bound=$BOUND"
@@ -48,8 +88,9 @@ snapshot() {
   fi
   [ ! -e "$G/UDC" ] || log "gadget UDC binding: $(cat "$G/UDC" 2>/dev/null)"
   [ ! -e "$G/functions/mass_storage.0/lun.0/file" ] || log "mass-storage backing file: $(cat "$G/functions/mass_storage.0/lun.0/file" 2>/dev/null)"
+  dump_usb_status
   if command -v dmesg >/dev/null 2>&1; then
-    dmesg 2>/dev/null | grep -Ei 'dwc3|usb|phy|gadget|udc|ep0out|mass.storage' | tail -n 80 >> "$DIAG_LOG" || :
+    dmesg 2>/dev/null | grep -Ei 'dwc3|usb|phy|gadget|udc|ep0out|mass.storage|vbus|extcon|role.switch|rockchip-usb2phy|otg' | tail -n 100 >> "$DIAG_LOG" || :
   fi
 }
 cleanup() {
@@ -167,6 +208,12 @@ seen=0
 detached=0
 i=0
 while [ "$i" -lt 3600 ]; do
+  case "$i" in
+    10|30)
+      log "periodic USB role/PHY sample at ${i}s after gadget bind"
+      dump_usb_status
+      ;;
+  esac
   state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || printf 'not attached')
   case "$state" in
     "not attached"|"")
