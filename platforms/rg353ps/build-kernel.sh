@@ -411,20 +411,29 @@ else:
         + str(counter_old_count)
     )
 
-log_old = """\tdev_info(&rport->phy->dev, "RG353PS USB PHY OTG sample: mode=%d state=%d bvalid=%d suspended=%d host_extcon=%d\\n", rport->mode, rport->state, vbus_attach, rport->suspended, rphy->edev ? extcon_get_state(rphy->edev, EXTCON_USB_HOST) : -ENODEV);"""
-log_new = """\tif (rport->mode != USB_DR_MODE_PERIPHERAL ||
-\t    (++rg353ps_peripheral_samples % 5) == 1)
-\t\tdev_info(&rport->phy->dev, "RG353PS USB PHY OTG sample: mode=%d state=%d bvalid=%d suspended=%d host_extcon=%d\\n", rport->mode, rport->state, vbus_attach, rport->suspended, rphy->edev ? extcon_get_state(rphy->edev, EXTCON_USB_HOST) : -ENODEV);"""
-log_old_count = fn.count(log_old)
-if log_old_count == 1:
-    fn = fn.replace(log_old, log_new, 1)
-elif log_new in fn:
-    pass
-else:
+sample_lines = fn.splitlines(keepends=True)
+sample_indexes = [
+    index for index, line in enumerate(sample_lines)
+    if "RG353PS USB PHY OTG sample:" in line
+]
+if len(sample_indexes) != 1:
     raise SystemExit(
         "Could not uniquely locate USB PHY sample diagnostic line: "
-        + str(log_old_count)
+        + str(len(sample_indexes))
     )
+sample_index = sample_indexes[0]
+sample_line = sample_lines[sample_index]
+preceding = "".join(sample_lines[max(0, sample_index - 2):sample_index])
+if "++rg353ps_peripheral_samples" not in preceding:
+    if not sample_line.lstrip().startswith("dev_info("):
+        raise SystemExit("Unexpected format for USB PHY sample diagnostic line")
+    indent = sample_line[:len(sample_line) - len(sample_line.lstrip())]
+    sample_lines[sample_index:sample_index + 1] = [
+        indent + "if (rport->mode != USB_DR_MODE_PERIPHERAL ||\n",
+        indent + "    (++rg353ps_peripheral_samples % 5) == 1)\n",
+        indent + sample_line.lstrip(),
+    ]
+fn = "".join(sample_lines)
 
 text = text[:start] + fn + text[end:]
 source.write_text(text)
