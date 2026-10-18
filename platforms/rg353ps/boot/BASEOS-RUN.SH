@@ -5,16 +5,9 @@
 set +e
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export PATH
-STAMP="$(date +%Y%m%d-%H%M%S 2>/dev/null)"
-[ -n "$STAMP" ] || STAMP="unknown-time"
-OUTDIR=/mnt/SDCARD
-grep -q ' /mnt/SDCARD ' /proc/mounts 2>/dev/null || OUTDIR=/mnt/boot
-OUT="$OUTDIR/rg353ps-boot-diag-$STAMP.txt"
-exec >"$OUT" 2>&1
 section() { echo; echo "===== $* ====="; }
 section "AUTORUN MARKER"
 echo "BASEOS-RUN.SH executed at $(date)"
-echo "Output: $OUT"
 echo "Boot script path: /mnt/boot/BASEOS-RUN.SH"
 section "KERNEL ID"
 uname -a
