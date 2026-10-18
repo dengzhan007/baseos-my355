@@ -42,7 +42,6 @@ else
   echo "dynamic_debug control unavailable"
 fi
 section "USB PHY / UDC / EXTCON"
-grep -Ei 'RG353PS|usb2phy|phy-fe8a0000|BVALID|otg-bvalid|extcon|fcc00000|dwc3|mass.storage|usb.storage|UDC|regulator\.17|otg_switch' /proc/kmsg 2>/dev/null
 dmesg 2>&1 | grep -Ei 'RG353PS|usb2phy|phy-fe8a0000|BVALID|otg-bvalid|extcon|fcc00000|dwc3|mass.storage|usb.storage|UDC|regulator\.17|otg_switch' | tail -n 600
 section "INTERRUPTS"
 grep -Ei 'usb|phy|otg|dwc' /proc/interrupts 2>/dev/null
