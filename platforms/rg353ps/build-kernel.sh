@@ -418,8 +418,8 @@ text = source.read_text()
 # Match the function independently of upstream whitespace and local pre-existing edits.
 import re
 irq_pattern = re.compile(
-    r"(static irqreturn_t rockchip_usb2phy_bvalid_irq\\(int irq, void \\*data\\)\\s*\\{"
-    r".*?struct rockchip_usb2phy \\*rphy = dev_get_drvdata\\(rport->phy->dev.parent\\);)",
+    r"(static irqreturn_t rockchip_usb2phy_bvalid_irq\(int irq, void \*data\)\s*\{"
+    r".*?struct rockchip_usb2phy \*rphy = dev_get_drvdata\(rport->phy->dev.parent\);)",
     re.S,
 )
 def add_irq_entry(match):
