@@ -490,7 +490,7 @@ request_new = """			ret = devm_request_threaded_irq(rphy->dev, rport->bvalid_irq
 							"rockchip_usb2phy_bvalid",
 							rport);
 			dev_info(rphy->dev,
-				 "RG353PS BVALID IRQ request: irq=%d result=%d mode=%d\n",
+				 "RG353PS BVALID IRQ request: irq=%d result=%d mode=%d\\n",
 				 rport->bvalid_irq, ret, rport->mode);
 			if (ret) {
 """
