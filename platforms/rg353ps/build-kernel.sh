@@ -370,6 +370,67 @@ source.write_text(text)
 print("Added checked RG353PS USB PHY mode/VBUS/IRQ diagnostics")
 PYCODE
 
+      # Fixed-peripheral ports must not depend solely on the BVALID IRQ.
+      # Re-sample VBUS from B_IDLE every 2 seconds; rate-limit the diagnostic
+      # because the state machine now remains active while no cable is present.
+      python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/drivers/phy/rockchip/phy-rockchip-inno-usb2.c")
+text = source.read_text()
+start = text.index("static void rockchip_usb2phy_otg_sm_work(struct work_struct *work)")
+end = text.index("static const char *chg_to_string", start)
+fn = text[start:end]
+
+poll_anchor = "\t\tif (rport->vbus_attached != vbus_attach) {"
+poll_insert = (
+    "\t\tif (rport->mode == USB_DR_MODE_PERIPHERAL)\n"
+    "\t\t\tsch_work = true;\n\n"
+)
+poll_old_count = fn.count(poll_anchor)
+if poll_old_count == 1:
+    fn = fn.replace(poll_anchor, poll_insert + poll_anchor, 1)
+elif poll_insert + poll_anchor in fn:
+    pass
+else:
+    raise SystemExit(
+        "Could not uniquely locate USB PHY B_IDLE polling point: "
+        + str(poll_old_count)
+    )
+
+counter_anchor = "\tbool vbus_attach, sch_work, notify_charger;\n"
+counter_insert = counter_anchor + "\tstatic unsigned int rg353ps_peripheral_samples;\n"
+counter_old_count = fn.count(counter_anchor)
+if counter_old_count == 1:
+    fn = fn.replace(counter_anchor, counter_insert, 1)
+elif counter_insert in fn:
+    pass
+else:
+    raise SystemExit(
+        "Could not uniquely locate USB PHY sample counter point: "
+        + str(counter_old_count)
+    )
+
+log_old = """\tdev_info(&rport->phy->dev, "RG353PS USB PHY OTG sample: mode=%d state=%d bvalid=%d suspended=%d host_extcon=%d\\n", rport->mode, rport->state, vbus_attach, rport->suspended, rphy->edev ? extcon_get_state(rphy->edev, EXTCON_USB_HOST) : -ENODEV);"""
+log_new = """\tif (rport->mode != USB_DR_MODE_PERIPHERAL ||
+\t    (++rg353ps_peripheral_samples % 5) == 1)
+\t\tdev_info(&rport->phy->dev, "RG353PS USB PHY OTG sample: mode=%d state=%d bvalid=%d suspended=%d host_extcon=%d\\n", rport->mode, rport->state, vbus_attach, rport->suspended, rphy->edev ? extcon_get_state(rphy->edev, EXTCON_USB_HOST) : -ENODEV);"""
+log_old_count = fn.count(log_old)
+if log_old_count == 1:
+    fn = fn.replace(log_old, log_new, 1)
+elif log_new in fn:
+    pass
+else:
+    raise SystemExit(
+        "Could not uniquely locate USB PHY sample diagnostic line: "
+        + str(log_old_count)
+    )
+
+text = text[:start] + fn + text[end:]
+source.write_text(text)
+print("Applied fixed-peripheral B_IDLE VBUS polling and rate-limited sampling")
+PYCODE
+
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
