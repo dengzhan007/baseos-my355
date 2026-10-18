@@ -415,33 +415,27 @@ from pathlib import Path
 source = Path("$SRC/drivers/phy/rockchip/phy-rockchip-inno-usb2.c")
 text = source.read_text()
 
-irq_old = """static irqreturn_t rockchip_usb2phy_bvalid_irq(int irq, void *data)
-{
-	struct rockchip_usb2phy_port *rport = data;
-	struct rockchip_usb2phy *rphy = dev_get_drvdata(rport->phy->dev.parent);
-
-	if (!property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st))
-		return IRQ_NONE;
+# Match the function independently of upstream whitespace and local pre-existing edits.
+import re
+irq_pattern = re.compile(
+    r"(static irqreturn_t rockchip_usb2phy_bvalid_irq\\(int irq, void \\*data\\)\\s*\\{"
+    r".*?struct rockchip_usb2phy \\*rphy = dev_get_drvdata\\(rport->phy->dev.parent\\);)",
+    re.S,
+)
+def add_irq_entry(match):
+    block = match.group(1)
+    if "RG353PS BVALID IRQ entry:" in block:
+        return block
+    return block + """
+\tbool pending = property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st);
+\tdev_info(&rport->phy->dev,
+\t\t "RG353PS BVALID IRQ entry: irq=%d pending=%d mode=%d state=%d bvalid=%d\\n",
+\t\t irq, pending, rport->mode, rport->state,
+\t\t property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid));
 """
-irq_new = """static irqreturn_t rockchip_usb2phy_bvalid_irq(int irq, void *data)
-{
-	struct rockchip_usb2phy_port *rport = data;
-	struct rockchip_usb2phy *rphy = dev_get_drvdata(rport->phy->dev.parent);
-	bool pending = property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st);
-
-	dev_info(&rport->phy->dev,
-		 "RG353PS BVALID IRQ entry: irq=%d pending=%d mode=%d state=%d bvalid=%d\\n",
-		 irq, pending, rport->mode, rport->state,
-		 property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid));
-
-	if (!pending)
-		return IRQ_NONE;
-"""
-irq_count = text.count(irq_old)
-if irq_count == 1:
-    text = text.replace(irq_old, irq_new, 1)
-elif text.count(irq_new) != 1:
-    raise SystemExit("Could not uniquely patch BVALID IRQ entry: " + str(irq_count))
+text, irq_count = irq_pattern.subn(add_irq_entry, text, count=1)
+if irq_count != 1:
+    raise SystemExit("Could not locate BVALID IRQ function/body: " + str(irq_count))
 
 extcon_old = """			if (notify_charger && rphy->edev) {
 				extcon_set_state_sync(rphy->edev,
