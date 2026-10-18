@@ -430,7 +430,7 @@ irq_new = """static irqreturn_t rockchip_usb2phy_bvalid_irq(int irq, void *data)
 	bool pending = property_enabled(rphy->grf, &rport->port_cfg->bvalid_det_st);
 
 	dev_info(&rport->phy->dev,
-		 "RG353PS BVALID IRQ entry: irq=%d pending=%d mode=%d state=%d bvalid=%d\n",
+		 "RG353PS BVALID IRQ entry: irq=%d pending=%d mode=%d state=%d bvalid=%d\\n",
 		 irq, pending, rport->mode, rport->state,
 		 property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid));
 
@@ -454,7 +454,7 @@ extcon_old = """			if (notify_charger && rphy->edev) {
 """
 extcon_new = """			if (notify_charger && rphy->edev) {
 				dev_info(&rport->phy->dev,
-					 "RG353PS extcon notify before: cable=%d vbus=%d usb=%d\n",
+					 "RG353PS extcon notify before: cable=%d vbus=%d usb=%d\\n",
 					 cable, vbus_attach,
 					 extcon_get_state(rphy->edev, EXTCON_USB));
 				extcon_set_state_sync(rphy->edev,
@@ -464,7 +464,7 @@ extcon_new = """			if (notify_charger && rphy->edev) {
 							      EXTCON_USB,
 							      vbus_attach);
 				dev_info(&rport->phy->dev,
-					 "RG353PS extcon notify after: cable=%d vbus=%d usb=%d\n",
+					 "RG353PS extcon notify after: cable=%d vbus=%d usb=%d\\n",
 					 cable, vbus_attach,
 					 extcon_get_state(rphy->edev, EXTCON_USB));
 			}
