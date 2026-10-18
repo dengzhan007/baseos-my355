@@ -512,22 +512,21 @@ otg_end = text.index("static const char *chg_to_string", otg_start)
 otg = text[otg_start:otg_end]
 anchor = chr(9) + "vbus_attach = property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid);" + chr(10)
 newline = chr(92) + "n"
-block = (
-    chr(9) + "if (rport->mode == USB_DR_MODE_PERIPHERAL && " +
-    "(rg353ps_peripheral_samples % 5) == 0) {" + chr(10) +
-    chr(9) * 2 + "unsigned int rg353ps_grf_en = 0, rg353ps_grf_st = 0;" + chr(10) +
-    chr(9) * 2 + "unsigned int rg353ps_grf_clr = 0, rg353ps_grf_utmi = 0;" + chr(10) +
-    chr(9) * 2 + "int rg353ps_ret_en, rg353ps_ret_st, rg353ps_ret_clr, rg353ps_ret_utmi;" + chr(10) + chr(10) +
-    chr(9) * 2 + "rg353ps_ret_en = regmap_read(rphy->grf, 0x0080, &rg353ps_grf_en);" + chr(10) +
-    chr(9) * 2 + "rg353ps_ret_st = regmap_read(rphy->grf, 0x0084, &rg353ps_grf_st);" + chr(10) +
-    chr(9) * 2 + "rg353ps_ret_clr = regmap_read(rphy->grf, 0x0088, &rg353ps_grf_clr);" + chr(10) +
-    chr(9) * 2 + "rg353ps_ret_utmi = regmap_read(rphy->grf, 0x00c0, &rg353ps_grf_utmi);" + chr(10) +
-    chr(9) * 2 + "dev_info(&rport->phy->dev," + chr(10) +
-    chr(9) * 3 + '"RG353PS GRF sample: en=%d:%08x status=%d:%08x clear=%d:%08x utmi=%d:%08x' + newline + '",' + chr(10) +
-    chr(9) * 3 + "rg353ps_ret_en, rg353ps_grf_en, rg353ps_ret_st, rg353ps_grf_st," + chr(10) +
-    chr(9) * 3 + "rg353ps_ret_clr, rg353ps_grf_clr, rg353ps_ret_utmi, rg353ps_grf_utmi);" + chr(10) +
-    chr(9) + "}" + chr(10)
-)
+block = r'''    if (rport->mode == USB_DR_MODE_PERIPHERAL && (rg353ps_peripheral_samples % 5) == 0) {
+        unsigned int rg353ps_grf_en = 0, rg353ps_grf_st = 0;
+        unsigned int rg353ps_grf_clr = 0, rg353ps_grf_utmi = 0;
+        int rg353ps_ret_en, rg353ps_ret_st, rg353ps_ret_clr, rg353ps_ret_utmi;
+
+        rg353ps_ret_en = regmap_read(rphy->grf, 0x0080, &rg353ps_grf_en);
+        rg353ps_ret_st = regmap_read(rphy->grf, 0x0084, &rg353ps_grf_st);
+        rg353ps_ret_clr = regmap_read(rphy->grf, 0x0088, &rg353ps_grf_clr);
+        rg353ps_ret_utmi = regmap_read(rphy->grf, 0x00c0, &rg353ps_grf_utmi);
+        dev_info(&rport->phy->dev,
+                 "RG353PS GRF sample: en=%d:%08x status=%d:%08x clear=%d:%08x utmi=%d:%08x\\n",
+                 rg353ps_ret_en, rg353ps_grf_en, rg353ps_ret_st, rg353ps_grf_st,
+                 rg353ps_ret_clr, rg353ps_grf_clr, rg353ps_ret_utmi, rg353ps_grf_utmi);
+    }
+'''
 count = otg.count(anchor)
 if count == 1:
     if "RG353PS GRF sample:" not in otg:
