@@ -8,6 +8,7 @@ on:
       - "platforms/rg353ps/rootfs/usr/sbin/baseos-usb-storage"
       - "platforms/rg353ps/rootfs/usr/sbin/baseos-frontend-session"
       - "platforms/rg353ps/build-rootfs.sh"
+      - "platforms/rg353ps/build-kernel.sh"
       - "overlay/usr/sbin/usb-gadget-adb"
       - ".github/workflows/rg353ps-storage-mode-check.yml"
   pull_request:
@@ -16,6 +17,7 @@ on:
       - "platforms/rg353ps/rootfs/usr/sbin/baseos-usb-storage"
       - "platforms/rg353ps/rootfs/usr/sbin/baseos-frontend-session"
       - "platforms/rg353ps/build-rootfs.sh"
+      - "platforms/rg353ps/build-kernel.sh"
       - "overlay/usr/sbin/usb-gadget-adb"
       - ".github/workflows/rg353ps-storage-mode-check.yml"
 
@@ -32,6 +34,26 @@ jobs:
           sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-usb-storage
           sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-frontend-session
           sh -n platforms/rg353ps/build-rootfs.sh
+          sh -n platforms/rg353ps/build-kernel.sh
           sh -n overlay/usr/sbin/usb-gadget-adb
+      - name: Check embedded Python build-edit scripts compile
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("platforms/rg353ps/build-kernel.sh")
+          source = path.read_text()
+          blocks = re.findall(
+              r"^[ \t]*python3 - <<PYCODE[ \t]*\n(.*?)^[ \t]*PYCODE[ \t]*$",
+              source,
+              re.MULTILINE | re.DOTALL,
+          )
+          if not blocks:
+              raise SystemExit(f"No embedded Python blocks found in {path}")
+          for index, block in enumerate(blocks, 1):
+              compile(block, f"{path}:embedded-python-{index}", "exec")
+          print(f"Validated {len(blocks)} embedded Python build-edit blocks")
+
       - name: Check hotkey daemon compiles cleanly
         run: gcc -std=c11 -O2 -Wall -Wextra -Werror -fsyntax-only platforms/rg353ps/src/rg353ps-hotkeyd.c
