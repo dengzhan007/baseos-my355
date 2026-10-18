@@ -498,45 +498,9 @@ source.write_text(text)
 print("Applied RG353PS BVALID IRQ entry, registration, and extcon-notify diagnostics")
 PYCODE
 
-      # Capture RK3568 USB2PHY GRF state only inside the OTG state machine.
-      # Keep the counter in the same function scope and escape the C newline
-      # through the shell heredoc safely.
-      python3 - <<PYCODE
-from pathlib import Path
-import re
-
-source = Path("$SRC/drivers/phy/rockchip/phy-rockchip-inno-usb2.c")
-text = source.read_text()
-otg_start = text.index("static void rockchip_usb2phy_otg_sm_work(struct work_struct *work)")
-otg_end = text.index("static const char *chg_to_string", otg_start)
-otg = text[otg_start:otg_end]
-anchor = chr(9) + "vbus_attach = property_enabled(rphy->grf, &rport->port_cfg->utmi_bvalid);" + chr(10)
-newline = chr(92) + "n"
-block = r"""    if (rport->mode == USB_DR_MODE_PERIPHERAL && (rg353ps_peripheral_samples % 5) == 0) {
-        unsigned int rg353ps_grf_en = 0, rg353ps_grf_st = 0;
-        unsigned int rg353ps_grf_clr = 0, rg353ps_grf_utmi = 0;
-        int rg353ps_ret_en, rg353ps_ret_st, rg353ps_ret_clr, rg353ps_ret_utmi;
-
-        rg353ps_ret_en = regmap_read(rphy->grf, 0x0080, &rg353ps_grf_en);
-        rg353ps_ret_st = regmap_read(rphy->grf, 0x0084, &rg353ps_grf_st);
-        rg353ps_ret_clr = regmap_read(rphy->grf, 0x0088, &rg353ps_grf_clr);
-        rg353ps_ret_utmi = regmap_read(rphy->grf, 0x00c0, &rg353ps_grf_utmi);
-        dev_info(&rport->phy->dev,
-                 "RG353PS GRF sample: en=%d:%08x status=%d:%08x clear=%d:%08x utmi=%d:%08x\\n",
-                 rg353ps_ret_en, rg353ps_grf_en, rg353ps_ret_st, rg353ps_grf_st,
-                 rg353ps_ret_clr, rg353ps_grf_clr, rg353ps_ret_utmi, rg353ps_grf_utmi);
-    }
-"""
-count = otg.count(anchor)
-if count == 1:
-    if "RG353PS GRF sample:" not in otg:
-        otg = otg.replace(anchor, anchor + block, 1)
-elif otg.count("RG353PS GRF sample:") != 1:
-    raise SystemExit("Could not uniquely locate OTG VBUS read for GRF diagnostics: " + str(count))
-text = text[:otg_start] + otg + text[otg_end:]
-source.write_text(text)
-print("Applied read-only RK3568 USB2PHY GRF diagnostics inside OTG state machine")
-PYCODE
+      # GRF register diagnostics were removed: the pinned kernel source does not
+      # expose a uniquely matching VBUS-read anchor. Keep the already-applied
+      # peripheral polling and IRQ diagnostics without blocking the kernel build.
 
       # Log the shared-IRQ path as well: when rphy->irq is configured,
       # port_irq_init() intentionally skips the per-port otg-bvalid IRQ.
