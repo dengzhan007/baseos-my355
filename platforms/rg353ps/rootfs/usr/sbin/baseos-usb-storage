@@ -9,6 +9,7 @@ REQUEST=/run/baseos-usb-storage.request
 PAUSED=/run/baseos-frontend-paused
 ACTIVE=/run/baseos-usb-storage.active
 DIAG_LOG=/run/rg353ps-usb-storage.log
+BOOT_LOG=/mnt/boot/rg353ps-usb-storage.log
 CONFIGFS=/sys/kernel/config
 G="$CONFIGFS/usb_gadget/rockchip"
 UDC=
@@ -23,6 +24,12 @@ CREATED_GADGET=0
 BOOT_MODE=0
 PROMPT_PID=
 : > "$DIAG_LOG"
+# BASEOS_BOOT_LIVE_LOG_V1: mirror logs to BOOT so forced power-off preserves progress.
+if [ -d /mnt/boot ] && grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
+  : > "$BOOT_LOG" 2>/dev/null || :
+  printf '%s baseos-usb-storage: session started; live BOOT logging enabled\n' "$(date '+%F %T' 2>/dev/null || echo uptime)" >> "$BOOT_LOG" 2>/dev/null || :
+  sync
+fi
 case "${1:-}" in
   "") ;;
   --boot) BOOT_MODE=1 ;;
@@ -30,8 +37,12 @@ case "${1:-}" in
 esac
 
 log() {
-  printf '%s baseos-usb-storage: %s\n' "$(date '+%F %T' 2>/dev/null || echo uptime)" "$*" >> "$DIAG_LOG"
+  line="$(date '+%F %T' 2>/dev/null || echo uptime) baseos-usb-storage: $*"
+  printf '%s\n' "$line" >> "$DIAG_LOG"
   printf 'baseos-usb-storage: %s\n' "$*" > /dev/kmsg 2>/dev/null || :
+  if [ -d /mnt/boot ] && grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
+    printf '%s\n' "$line" >> "$BOOT_LOG" 2>/dev/null || :
+  fi
 }
 is_mounted() { grep -q " $1 " /proc/mounts; }
 read_usb_attr() {
@@ -328,6 +339,13 @@ while [ "$i" -lt 3600 ]; do
       dump_usb_status
       ;;
   esac
+  # Sparse durable heartbeat: reveals where a stalled host transfer stopped.
+  if [ "$i" -gt 0 ] && [ $((i % 10)) -eq 0 ]; then
+    hb_state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
+    hb_speed="$(cat "/sys/class/udc/$UDC/current_speed" 2>/dev/null || echo unknown)"
+    log "transfer heartbeat elapsed=${i}s udc_state=$hb_state speed=$hb_speed"
+    sync
+  fi
   state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || printf 'not attached')
   # A Windows "Unknown USB device / Device Descriptor Request Failed" can
   # leave the UDC in powered/default/addressed forever. Count success only
