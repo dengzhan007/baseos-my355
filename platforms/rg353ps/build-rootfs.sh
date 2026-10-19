@@ -81,7 +81,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     apk --root "$R" --arch aarch64 --initdb --no-scripts --no-cache add \
       v4l-utils evtest alsa-utils iw libzip libgcc \
       mesa-egl mesa-gles mesa-gbm mesa-dri-gallium \
-      libdrm-tests mesa-utils kmscube sdl2 \
+      libdrm-tests mesa-utils kmscube sdl2 sdl2_image sdl2_ttf \
       sgdisk partx blkid wipefs exfatprogs
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
       -o "$R/usr/sbin/rg353ps-control-center" /src/rg353ps-control-center.c
@@ -126,6 +126,16 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     test -x "$R/usr/bin/wipefs" || test -x "$R/usr/sbin/wipefs" || { echo "wipefs is missing" >&2; exit 1; }
     test -x "$R/usr/bin/mkfs.exfat" || test -x "$R/usr/sbin/mkfs.exfat" || test -x "$R/sbin/mkfs.exfat" || { echo "mkfs.exfat is missing" >&2; exit 1; }
     test -e "$R/usr/lib/libzip.so.5" || { echo "libzip runtime is missing for mGBA" >&2; exit 1; }
+    # NextUI's launcher and some menu/front-end paths require both SDL2 image
+    # loading and TrueType text rendering. Keep these runtime libraries in the
+    # target image, not only in the build container, and fail the build if APK
+    # stops providing the SONAMEs expected by the NextUI binaries.
+    for runtime_lib in libSDL2_image-2.0.so.0 libSDL2_ttf-2.0.so.0; do
+      test -e "$R/usr/lib/$runtime_lib" || {
+        echo "required SDL2 runtime library is missing: $runtime_lib" >&2
+        exit 1
+      }
+    done
     test -x "$R/usr/bin/aplay" || {
       echo "aplay was not installed into target rootfs" >&2
       exit 1
