@@ -126,7 +126,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     test -x "$R/usr/bin/wipefs" || test -x "$R/usr/sbin/wipefs" || { echo "wipefs is missing" >&2; exit 1; }
     test -x "$R/usr/bin/mkfs.exfat" || test -x "$R/usr/sbin/mkfs.exfat" || test -x "$R/sbin/mkfs.exfat" || { echo "mkfs.exfat is missing" >&2; exit 1; }
     test -e "$R/usr/lib/libzip.so.5" || { echo "libzip runtime is missing for mGBA" >&2; exit 1; }
-    # NextUI's launcher and some menu/front-end paths require both SDL2 image
+    # The NextUI launcher and some menu/front-end paths require both SDL2 image
     # loading and TrueType text rendering. Keep these runtime libraries in the
     # target image, not only in the build container, and fail the build if APK
     # stops providing the SONAMEs expected by the NextUI binaries.
