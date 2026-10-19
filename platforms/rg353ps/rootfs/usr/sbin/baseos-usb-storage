@@ -10,6 +10,8 @@ PAUSED=/run/baseos-frontend-paused
 ACTIVE=/run/baseos-usb-storage.active
 DIAG_LOG=/run/rg353ps-usb-storage.log
 BOOT_LOG=/mnt/boot/rg353ps-usb-storage.log
+KERNEL_ERR_START_SEC="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
+LAST_KERNEL_ERRORS=
 CONFIGFS=/sys/kernel/config
 G="$CONFIGFS/usb_gadget/rockchip"
 UDC=
@@ -52,8 +54,7 @@ read_usb_attr() {
   log "USB sysfs: $p=$value"
 }
 is_data_cable_connected() {
-  # Match ROCKNIX's RK3566 topology: the DWC3 platform device has a supplier
-  # link to the Rockchip USB2 PHY, whose extcon cable entries identify SDP/CDP.
+  # Prefer the UDC's supplier-PHY extcon entries when this kernel exposes them.
   for cable in /sys/devices/platform/"$UDC"/supplier:platform:*usb2phy/extcon/*/cable.*; do
     [ -r "$cable/name" ] && [ -r "$cable/state" ] || continue
     name="$(cat "$cable/name" 2>/dev/null)"
@@ -61,6 +62,17 @@ is_data_cable_connected() {
       SDP|CDP)
         [ "$(cat "$cable/state" 2>/dev/null)" = "1" ] && return 0
         ;;
+    esac
+  done
+  # Some RK3566 kernels expose the active cable only through /sys/class/extcon.
+  # The RG353PS DC/OTG PHY reports CDP=1 while attached to a PC in this setup.
+  for extcon in /sys/class/extcon/*; do
+    [ -r "$extcon/name" ] && [ -r "$extcon/state" ] || continue
+    name="$(cat "$extcon/name" 2>/dev/null)"
+    case "$name" in *usb2phy*) ;; *) continue ;; esac
+    state="$(cat "$extcon/state" 2>/dev/null)"
+    case " $state " in
+      *" SDP=1 "*|*" CDP=1 "*) return 0 ;;
     esac
   done
   return 1
@@ -331,6 +343,7 @@ log "USB mass storage active for $DEVICE; unplug cable to return to BaseOS"
 # wait up to 45 seconds for first attachment, then safely unbind and remount.
 seen=0
 detached=0
+LAST_RESET_STATE=
 i=0
 while [ "$i" -lt 3600 ]; do
   case "$i" in
@@ -339,11 +352,20 @@ while [ "$i" -lt 3600 ]; do
       dump_usb_status
       ;;
   esac
-  # Sparse durable heartbeat: reveals where a stalled host transfer stopped.
+  # Durable heartbeat with block I/O counters and only new-session kernel events.
   if [ "$i" -gt 0 ] && [ $((i % 10)) -eq 0 ]; then
     hb_state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
     hb_speed="$(cat "/sys/class/udc/$UDC/current_speed" 2>/dev/null || echo unknown)"
-    log "transfer heartbeat elapsed=${i}s udc_state=$hb_state speed=$hb_speed"
+    hb_cable=no
+    is_data_cable_connected && hb_cable=yes
+    log "transfer heartbeat elapsed=$i seconds udc_state=$hb_state speed=$hb_speed data_cable=$hb_cable"
+    hb_disk="$(grep -E ' mmcblk0(p[0-9]+)? ' /proc/diskstats 2>/dev/null | tr '\n' ';')"
+    [ -z "$hb_disk" ] || log "diskstats $hb_disk"
+    hb_errors="$(dmesg 2>/dev/null | awk -v start="$KERNEL_ERR_START_SEC" '{ if (match($0, /^\[[[:space:]]*[0-9.]+/)) { t=substr($0, RSTART, RLENGTH); sub(/^\[[[:space:]]*/, "", t); if ((t+0) >= (start+0)) print } }' | grep -Ei 'mmc.*(error|timeout|reset)|I/O error|Buffer I/O|dwc3.*(error|timeout)|usb.*(error|reset)' | grep -v 'baseos-usb-storage:' | tail -n 5 | tr '\n' ';')"
+    if [ -n "$hb_errors" ] && [ "$hb_errors" != "$LAST_KERNEL_ERRORS" ]; then
+      log "kernel events since storage start: $hb_errors"
+      LAST_KERNEL_ERRORS="$hb_errors"
+    fi
     sync
   fi
   state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || printf 'not attached')
@@ -376,16 +398,27 @@ while [ "$i" -lt 3600 ]; do
       ;;
     *)
       if [ "$seen" -eq 1 ]; then
-        detached=$((detached+1))
+        # UDC state=default may mean the host reset the USB bus, not that the
+        # cable was unplugged. Never dismantle the gadget while SDP/CDP is
+        # still asserted; allow Windows to enumerate the device again.
+        if is_data_cable_connected; then
+          if [ "$LAST_RESET_STATE" != "$state" ]; then
+            log "UDC left configured (state=$state) but USB data cable remains detected; preserving gadget for re-enumeration"
+            LAST_RESET_STATE="$state"
+          fi
+          detached=0
+        else
+          detached=$((detached+1))
+        fi
       elif [ "$i" -ge 45 ]; then
         log "UDC did not reach configured within 45 seconds (last state=$state); aborting storage mode and restoring local mount"
         break
       fi
       ;;
   esac
-  # After a successful enumeration, return when the host disconnects or
-  # leaves the configured/suspended states for three consecutive samples.
-  [ "$detached" -lt 3 ] || { log "USB detach / deconfiguration confirmed; restoring local mount"; break; }
+  # After a successful enumeration, return only after three samples with no
+  # PHY/extcon data-cable indication. A transient UDC reset alone is not unplug.
+  [ "$detached" -lt 3 ] || { log "USB cable no longer detected for three samples; restoring local mount"; break; }
   sleep 1
   i=$((i+1))
 done
