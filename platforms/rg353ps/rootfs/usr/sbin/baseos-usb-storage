@@ -18,6 +18,7 @@ MOUNTPOINT=
 DEVICE=
 FSTYPE=
 BOUND=0
+CABLE_TRIGGERED=0
 CREATED_GADGET=0
 BOOT_MODE=0
 PROMPT_PID=
@@ -261,8 +262,9 @@ while [ "$i" -lt 3600 ]; do
   state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || printf 'not attached')
   # Without udev, poll for the RK3566 PHY extcon change and run the
   # upstream soft-connect workaround when a data cable appears.
-  if [ "$seen" -eq 0 ] && is_data_cable_connected; then
+  if [ "$seen" -eq 0 ] && [ "$CABLE_TRIGGERED" -eq 0 ] && is_data_cable_connected; then
     rk3566_usb_trigger || :
+    CABLE_TRIGGERED=1
   fi
   case "$state" in
     "not attached"|"")
