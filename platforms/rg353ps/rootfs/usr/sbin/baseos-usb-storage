@@ -102,6 +102,16 @@ dump_usb_status() {
     "/sys/bus/platform/devices/$UDC/power/runtime_status"; do
     read_usb_attr "$p"
   done
+  # Log the exact nested extcon cable entries ROCKNIX uses, not just
+  # /sys/class/extcon summaries (which can hide SDP/CDP cable state).
+  for phy in /sys/devices/platform/"$UDC"/supplier:platform:*usb2phy; do
+    [ -d "$phy" ] || continue
+    log "USB PHY supplier path: $phy"
+    for cable in "$phy"/extcon/*/cable.*; do
+      [ -r "$cable/name" ] && [ -r "$cable/state" ] || continue
+      log "USB extcon cable: $cable name=$(cat "$cable/name" 2>/dev/null) state=$(cat "$cable/state" 2>/dev/null)"
+    done
+  done
   for d in /sys/bus/platform/devices/*phy*; do
     [ -d "$d" ] || continue
     case "$d" in *usb2phy*|*usb-phy*|*phy*) ;; *) continue ;; esac
