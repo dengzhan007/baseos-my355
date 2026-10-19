@@ -569,6 +569,45 @@ source.write_text(text)
 print("Applied RG353PS probe/shared-IRQ/OTG state-machine entry diagnostics")
 PYCODE
 
+      # Windows USB2 enumeration workaround for the RG353PS DWC3 gadget.
+      # The current log shows bcdUSB changing from 0x0200 before UDC bind to
+      # 0x0201 afterward, which advertises USB 2.0 LPM/BOS capability. Test the
+      # legacy USB2 descriptor path by disabling gadget LPM on this peripheral
+      # controller only. Host-mode USB LPM is unaffected.
+      python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rgxx3.dtsi")
+text = source.read_text()
+
+old = """&usb_host0_xhci {
+\tdr_mode = "peripheral";
+\tphys = <&usb2phy0_otg>;
+\tphy-names = "usb2-phy";
+\tstatus = "okay";
+};"""
+new = """&usb_host0_xhci {
+\tdr_mode = "peripheral";
+\tphys = <&usb2phy0_otg>;
+\tphy-names = "usb2-phy";
+\tsnps,usb2-gadget-lpm-disable;
+\tstatus = "okay";
+};"""
+old_count = text.count(old)
+new_count = text.count(new)
+if old_count == 1:
+    text = text.replace(old, new, 1)
+elif new_count == 1:
+    pass
+else:
+    raise SystemExit(
+        "Could not uniquely patch RG353PS DWC3 USB2 gadget LPM property: "
+        f"original={old_count}, patched={new_count}"
+    )
+source.write_text(text)
+print("Disabled USB2 LPM advertisement for the RG353PS peripheral gadget")
+PYCODE
+
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
