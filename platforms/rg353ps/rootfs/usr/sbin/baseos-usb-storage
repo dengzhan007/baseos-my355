@@ -168,6 +168,12 @@ cleanup() {
     cp "$DIAG_LOG" "$MOUNTPOINT/rg353ps-usb-storage.log" 2>/dev/null || :
     sync
   fi
+  # Also write to the FAT boot partition so the log can be retrieved from a PC
+  # even if the data partition could not be remounted successfully.
+  if [ -d /mnt/boot ] && grep -q ' /mnt/boot ' /proc/mounts; then
+    cp "$DIAG_LOG" /mnt/boot/rg353ps-usb-storage.log 2>/dev/null || :
+    sync
+  fi
   rm -f "$ACTIVE" "$REQUEST" "$PAUSED"
   log "storage mode ended; diagnostic log saved when data partition was mounted"
 }
@@ -270,30 +276,30 @@ while [ "$i" -lt 3600 ]; do
       ;;
   esac
   state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || printf 'not attached')
-  # Without udev, poll for the RK3566 PHY extcon change and run the
-  # upstream soft-connect workaround when a data cable appears.
-  if [ "$seen" -eq 0 ] && [ "$CABLE_TRIGGERED" -eq 0 ] && is_data_cable_connected; then
-    rk3566_usb_trigger || :
-    CABLE_TRIGGERED=1
-  fi
+  # A Windows "Unknown USB device / Device Descriptor Request Failed" can
+  # leave the UDC in powered/default/addressed forever. Count success only
+  # after the host reaches CONFIGURED, and always restore the local mount
+  # after 45 seconds if that never happens.
   case "$state" in
-    "not attached"|"")
-      if [ "$seen" -eq 1 ]; then
-        detached=$((detached+1))
-      else
-        if [ "$i" -ge 45 ]; then
-          log "UDC never attached within 45 seconds; aborting storage mode and restoring local mount"
-          break
-        fi
+    configured|suspended)
+      if [ "$seen" -eq 0 ]; then
+        log "UDC reached successful enumeration state=$state after ${i}s"
       fi
-      ;;
-    *)
-      if [ "$seen" -eq 0 ]; then log "UDC first attachment observed: state=$state after ${i}s"; fi
       seen=1
       detached=0
       ;;
+    *)
+      if [ "$seen" -eq 1 ]; then
+        detached=$((detached+1))
+      elif [ "$i" -ge 45 ]; then
+        log "UDC did not reach configured within 45 seconds (last state=$state); aborting storage mode and restoring local mount"
+        break
+      fi
+      ;;
   esac
-  [ "$detached" -lt 3 ] || { log "USB detach confirmed; restoring local mount"; break; }
+  # After a successful enumeration, return when the host disconnects or
+  # leaves the configured/suspended states for three consecutive samples.
+  [ "$detached" -lt 3 ] || { log "USB detach / deconfiguration confirmed; restoring local mount"; break; }
   sleep 1
   i=$((i+1))
 done
