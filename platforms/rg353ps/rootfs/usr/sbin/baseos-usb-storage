@@ -59,24 +59,44 @@ ep0_control_ready() {
     grep -q 'control' "/sys/kernel/debug/usb/$UDC/ep0out/transfer_type" 2>/dev/null
 }
 rk3566_usb_trigger() {
-  [ -w "/sys/class/udc/$UDC/soft_connect" ] || {
-    log "RK3566 USB soft_connect unavailable; skipping workaround"
+  soft="/sys/class/udc/$UDC/soft_connect"
+  [ -w "$soft" ] || {
+    log "RK3566 USB soft_connect unavailable; skipping reconnect workaround"
     return 1
   }
+
+  state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
+  case "$state" in
+    configured|suspended)
+      log "RK3566 USB host already configured the gadget (state=$state); no reconnect needed"
+      return 0
+      ;;
+  esac
+
+  # The previous test reached UDC state=addressed/high-speed but Windows did
+  # not finish enumeration. ep0out being in control mode only proves the local
+  # endpoint was initialized; it does NOT prove the host accepted descriptors.
+  # Force one physical soft disconnect/reconnect so the host retries from the
+  # device-descriptor stage. This is a one-shot retry per storage-mode entry.
   if ep0_control_ready; then
-    log "RK3566 USB ep0out is already in control mode; no soft reconnect needed"
-    return 0
-  fi
-  if is_data_cable_connected; then
-    action=connect
+    log "RK3566 USB retry: ep0out=control but UDC state=$state; forcing one soft disconnect/reconnect"
   else
-    action=disconnect
+    log "RK3566 USB retry: ep0out not ready and UDC state=$state; forcing one soft disconnect/reconnect"
   fi
-  log "RK3566 USB workaround: ep0out not ready; soft $action"
-  printf '%s' "$action" > "/sys/class/udc/$UDC/soft_connect" 2>/dev/null || {
-    log "RK3566 USB soft_connect=$action failed"
+  printf '%s' disconnect > "$soft" 2>/dev/null || {
+    log "RK3566 USB soft_connect=disconnect failed"
     return 1
   }
+  sleep 1
+  printf '%s' connect > "$soft" 2>/dev/null || {
+    log "RK3566 USB soft_connect=connect failed"
+    return 1
+  }
+  sleep 1
+  state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
+  speed="$(cat "/sys/class/udc/$UDC/current_speed" 2>/dev/null || echo unknown)"
+  log "RK3566 USB retry completed: UDC state=$state speed=$speed"
+  return 0
 }
 dump_usb_status() {
   # Read-only snapshots: expose role/VBUS/PHY state without changing hardware.
@@ -137,6 +157,24 @@ snapshot() {
   fi
   [ ! -e "$G/UDC" ] || log "gadget UDC binding: $(cat "$G/UDC" 2>/dev/null)"
   [ ! -e "$G/functions/mass_storage.0/lun.0/file" ] || log "mass-storage backing file: $(cat "$G/functions/mass_storage.0/lun.0/file" 2>/dev/null)"
+  # Record descriptor/configuration values while the gadget is still bound;
+  # the post-boot BASEOS-RUN.SH runs only after gadget cleanup.
+  for attr in idVendor idProduct bcdUSB bDeviceClass bDeviceSubClass bDeviceProtocol bMaxPacketSize0; do
+    read_usb_attr "$G/$attr"
+  done
+  for attr in manufacturer product serialnumber; do
+    read_usb_attr "$G/strings/0x409/$attr"
+  done
+  for attr in MaxPower bmAttributes; do
+    read_usb_attr "$G/configs/b.1/$attr"
+  done
+  read_usb_attr "$G/configs/b.1/strings/0x409/configuration"
+  for attr in file ro removable cdrom nofua inquiry_string; do
+    read_usb_attr "$G/functions/mass_storage.0/lun.0/$attr"
+  done
+  for p in /sys/kernel/debug/usb/"$UDC"/ep0out/transfer_type /sys/kernel/debug/usb/"$UDC"/ep0in/transfer_type /sys/kernel/debug/usb/"$UDC"/ep0out/queued /sys/kernel/debug/usb/"$UDC"/ep0in/queued; do
+    read_usb_attr "$p"
+  done
   dump_usb_status
   if command -v dmesg >/dev/null 2>&1; then
     dmesg 2>/dev/null | grep -Ei 'dwc3|usb|phy|gadget|udc|ep0out|mass.storage|vbus|extcon|role.switch|rockchip-usb2phy|otg' | tail -n 100 >> "$DIAG_LOG" || :
