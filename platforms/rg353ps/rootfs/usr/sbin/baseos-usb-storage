@@ -279,9 +279,24 @@ printf 'BaseOS' > "$G/strings/0x409/manufacturer" 2>/dev/null || :
 printf 'RG353PS USB Storage' > "$G/strings/0x409/product" 2>/dev/null || :
 printf 'storage' > "$G/configs/b.1/strings/0x409/configuration" 2>/dev/null || :
 printf '500' > "$G/configs/b.1/MaxPower" 2>/dev/null || :
-printf '1' > "$G/functions/mass_storage.0/lun.0/removable" 2>/dev/null || :
-printf '0' > "$G/functions/mass_storage.0/lun.0/ro" 2>/dev/null || :
-printf '%s' "$DEVICE" > "$G/functions/mass_storage.0/lun.0/file" || {
+LUN="$G/functions/mass_storage.0/lun.0"
+printf '1' > "$LUN/removable" 2>/dev/null || :
+printf '0' > "$LUN/ro" 2>/dev/null || :
+
+# Windows normally sends SCSI WRITE commands with FUA for removable media,
+# making each write synchronous and preventing block-layer request merging.
+# The Linux MSG documentation explicitly warns that this can dramatically
+# reduce performance. Ignore per-write FUA for this SD-card-backed LUN; normal
+# SYNCHRONIZE CACHE requests are still handled by the gadget. The trade-off is
+# that an unexpected unplug/power loss before the host flushes/ejects can lose
+# recently written data, so the host must safely eject before disconnecting.
+if [ -w "$LUN/nofua" ] && printf '1' > "$LUN/nofua" 2>/dev/null; then
+  log "mass-storage nofua=1; per-write FUA disabled to avoid synchronous SD-card writes"
+else
+  log "WARNING: could not enable mass-storage nofua; writes may be very slow with Windows removal-optimized policy"
+fi
+
+printf '%s' "$DEVICE" > "$LUN/file" || {
   log "could not assign $DEVICE to mass-storage gadget"; exit 1;
 }
 ln -s "$G/functions/mass_storage.0" "$G/configs/b.1/f-mass_storage.0" || {
