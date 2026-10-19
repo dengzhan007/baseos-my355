@@ -39,6 +39,44 @@ read_usb_attr() {
   value="$(cat "$p" 2>/dev/null | tr '\n' ' ')"
   log "USB sysfs: $p=$value"
 }
+is_data_cable_connected() {
+  # Match ROCKNIX's RK3566 topology: the DWC3 platform device has a supplier
+  # link to the Rockchip USB2 PHY, whose extcon cable entries identify SDP/CDP.
+  for cable in /sys/devices/platform/"$UDC"/supplier:platform:*usb2phy/extcon/*/cable.*; do
+    [ -r "$cable/name" ] && [ -r "$cable/state" ] || continue
+    name="$(cat "$cable/name" 2>/dev/null)"
+    case "$name" in
+      SDP|CDP)
+        [ "$(cat "$cable/state" 2>/dev/null)" = "1" ] && return 0
+        ;;
+    esac
+  done
+  return 1
+}
+ep0_control_ready() {
+  [ -r "/sys/kernel/debug/usb/$UDC/ep0out/transfer_type" ] &&
+    grep -q 'control' "/sys/kernel/debug/usb/$UDC/ep0out/transfer_type" 2>/dev/null
+}
+rk3566_usb_trigger() {
+  [ -w "/sys/class/udc/$UDC/soft_connect" ] || {
+    log "RK3566 USB soft_connect unavailable; skipping workaround"
+    return 1
+  }
+  if ep0_control_ready; then
+    log "RK3566 USB ep0out is already in control mode; no soft reconnect needed"
+    return 0
+  fi
+  if is_data_cable_connected; then
+    action=connect
+  else
+    action=disconnect
+  fi
+  log "RK3566 USB workaround: ep0out not ready; soft $action"
+  printf '%s' "$action" > "/sys/class/udc/$UDC/soft_connect" 2>/dev/null || {
+    log "RK3566 USB soft_connect=$action failed"
+    return 1
+  }
+}
 dump_usb_status() {
   # Read-only snapshots: expose role/VBUS/PHY state without changing hardware.
   for p in \
@@ -197,8 +235,14 @@ ln -s "$G/functions/mass_storage.0" "$G/configs/b.1/f-mass_storage.0" || {
 snapshot "immediately-before-bind"
 if ! printf '%s' "$UDC" > "$G/UDC"; then log "could not bind USB controller $UDC"; exit 1; fi
 BOUND=1
-sleep 2
-snapshot "two-seconds-after-bind"
+# BaseOS is a minimal BusyBox system (no udev daemon). ROCKNIX normally
+# re-runs this RK3566 workaround on extcon change; mount debugfs and poll here
+# instead so a cable plugged in after the on-screen prompt is handled too.
+grep -q " /sys/kernel/debug " /proc/mounts 2>/dev/null ||
+  mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || :
+sleep 1
+rk3566_usb_trigger || :
+snapshot "one-second-after-bind"
 log "USB mass storage active for $DEVICE; unplug cable to return to BaseOS"
 
 # A controller that never leaves "not attached" cannot reliably detect
@@ -215,6 +259,11 @@ while [ "$i" -lt 3600 ]; do
       ;;
   esac
   state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || printf 'not attached')
+  # Without udev, poll for the RK3566 PHY extcon change and run the
+  # upstream soft-connect workaround when a data cable appears.
+  if [ "$seen" -eq 0 ] && is_data_cable_connected; then
+    rk3566_usb_trigger || :
+  fi
   case "$state" in
     "not attached"|"")
       if [ "$seen" -eq 1 ]; then
