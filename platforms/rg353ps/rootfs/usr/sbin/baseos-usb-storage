@@ -380,6 +380,7 @@ while [ "$i" -lt 3600 ]; do
       fi
       seen=1
       detached=0
+      LAST_RESET_STATE=
       ;;
     suspended)
       # A suspend state is only valid evidence of a previously enumerated USB
@@ -388,7 +389,12 @@ while [ "$i" -lt 3600 ]; do
       # even when Windows fails the descriptor request. Do not let that state
       # suppress the 45-second enumeration-failure timeout.
       if [ "$seen" -eq 1 ]; then
-        detached=0
+        if is_data_cable_connected; then
+          detached=0
+          LAST_RESET_STATE=
+        else
+          detached=$((detached+1))
+        fi
       elif [ "$i" -ge 45 ]; then
         log "UDC is suspended but never reached configured within 45 seconds; aborting storage mode and restoring local mount"
         break
