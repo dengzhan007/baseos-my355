@@ -319,12 +319,27 @@ while [ "$i" -lt 3600 ]; do
   # after the host reaches CONFIGURED, and always restore the local mount
   # after 45 seconds if that never happens.
   case "$state" in
-    configured|suspended)
+    configured)
       if [ "$seen" -eq 0 ]; then
-        log "UDC reached successful enumeration state=$state after ${i}s"
+        log "UDC reached successful enumeration state=configured after ${i}s"
       fi
       seen=1
       detached=0
+      ;;
+    suspended)
+      # A suspend state is only valid evidence of a previously enumerated USB
+      # device if CONFIGURED was observed earlier in this session. On this
+      # RK3566 port, an attached DC cable can leave UDC suspended/addressed
+      # even when Windows fails the descriptor request. Do not let that state
+      # suppress the 45-second enumeration-failure timeout.
+      if [ "$seen" -eq 1 ]; then
+        detached=0
+      elif [ "$i" -ge 45 ]; then
+        log "UDC is suspended but never reached configured within 45 seconds; aborting storage mode and restoring local mount"
+        break
+      elif [ "$i" -eq 1 ]; then
+        log "UDC suspended before configured; keeping enumeration-failure timeout armed"
+      fi
       ;;
     *)
       if [ "$seen" -eq 1 ]; then
