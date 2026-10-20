@@ -218,7 +218,7 @@ snapshot() {
 cleanup() {
   trap - EXIT INT TERM HUP
   snapshot "cleanup-before-unbind"
-  if [ -n "$UDC" ] && [ -e "$G/UDC" ]; then printf '' > "$G/UDC" 2>/dev/null || :; fi
+  if [ -n "$UDC" ] && [ -e "$G/UDC" ]; then printf '\n' > "$G/UDC" 2>/dev/null || :; fi
   if [ -n "$PROMPT_PID" ]; then kill "$PROMPT_PID" 2>/dev/null || :; wait "$PROMPT_PID" 2>/dev/null || :; fi
   if [ -e "$G/configs/b.1/f-mass_storage.0" ]; then rm -f "$G/configs/b.1/f-mass_storage.0"; fi
   if [ -d "$G/functions/mass_storage.0" ]; then
@@ -255,7 +255,7 @@ trap cleanup EXIT INT TERM HUP
 [ ! -e "$ACTIVE" ] || exit 1
 : > "$ACTIVE"
 HELPER_CKSUM="$(cksum "$0" 2>/dev/null | awk '{print $1 ":" $2}')"
-log "helper_revision=usb-udc-rebind-v4 cksum=$HELPER_CKSUM"
+log "helper_revision=usb-udc-unbind-v5 cksum=$HELPER_CKSUM"
 # Prefer the removable frontend card (usually the left TF slot). If absent,
 # export only the dedicated BASEOS_DATA partition, never the boot/root system.
 if is_mounted /mnt/TF2; then
@@ -304,7 +304,7 @@ if [ ! -d "$G" ]; then
 fi
 if [ -e "$G/UDC" ]; then OLD_UDC=$(cat "$G/UDC" 2>/dev/null || :); fi
 if [ -L "$G/configs/b.1/f-ffs.adb" ]; then HAD_ADB=1; fi
-[ -e "$G/UDC" ] && printf '' > "$G/UDC" 2>/dev/null || :
+[ -e "$G/UDC" ] && printf '\n' > "$G/UDC" 2>/dev/null || :
 rm -f "$G/configs/b.1/f-ffs.adb" "$G/configs/b.1/f-mass_storage.0" 2>/dev/null || :
 mkdir -p "$G/strings/0x409" "$G/configs/b.1/strings/0x409" "$G/functions/mass_storage.0" || {
   log "cannot create mass-storage function"; exit 1;
@@ -444,10 +444,14 @@ while [ "$i" -lt 3600 ]; do
           if [ "$RESET_NOT_CONFIGURED_SECONDS" -ge 15 ] && [ "$RESET_RECOVERY_ATTEMPTED" -eq 0 ]; then
             RESET_RECOVERY_ATTEMPTED=1
             log "UDC has remained state=$state for ${RESET_NOT_CONFIGURED_SECONDS}s with SDP/CDP still present; attempting one gadget UDC unbind/rebind"
-            if [ -e "$G/UDC" ] && printf '' > "$G/UDC" 2>/dev/null; then
+            recovery_unbind_error=
+            if [ -e "$G/UDC" ] && recovery_unbind_error="$(printf '\n' 2>&1 > "$G/UDC")"; then
               BOUND=0
               sleep 1
-              if printf '%s' "$UDC" > "$G/UDC" 2>/dev/null; then
+              unbind_binding="$(cat "$G/UDC" 2>/dev/null || echo unreadable)"
+              log "UDC unbind requested; binding_after_unbind=${unbind_binding:-empty}"
+              recovery_bind_error=
+              if recovery_bind_error="$(printf '%s' "$UDC" 2>&1 > "$G/UDC")"; then
                 BOUND=1
                 sleep 3
                 recovery_state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
@@ -455,10 +459,12 @@ while [ "$i" -lt 3600 ]; do
                 recovery_binding="$(cat "$G/UDC" 2>/dev/null || echo empty)"
                 log "UDC rebind result state=$recovery_state speed=$recovery_speed gadget_binding=$recovery_binding"
               else
-                log "UDC rebind failed; gadget remains unbound and local data partition stays unmounted for safety"
+                recovery_binding="$(cat "$G/UDC" 2>/dev/null || echo unreadable)"
+                recovery_state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
+                log "UDC rebind failed: error=${recovery_bind_error:-no stderr} state=$recovery_state gadget_binding=${recovery_binding:-empty}; local data partition stays unmounted for safety"
               fi
             else
-              log "UDC unbind failed; skipped recovery rebind"
+              log "UDC unbind failed: error=${recovery_unbind_error:-no stderr}; skipped recovery rebind"
             fi
             RESET_NOT_CONFIGURED_SECONDS=0
           fi
