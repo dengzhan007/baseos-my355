@@ -622,7 +622,28 @@ if marker in text:
         raise SystemExit("DWC3 EP0 diagnostic marker is not unique")
 else:
     pattern = re.compile(
-        r'(?m)^([ \t]*)dev_err\(dwc->dev, "unexpected direction for Data Phase\\n"\);
+        r'(?m)^([ \t]*)dev_err\(dwc->dev, "unexpected direction for Data Phase\\n"\);$'
+    )
+    def enrich(match):
+        indent = match.group(1)
+        return (
+            indent + "dev_err(dwc->dev,\n"
+            + indent + '\t"unexpected direction for Data Phase: expect_in=%u event_ep=%u status=%u ep0state=%d next_event=%d resource_index=%u ep_flags=%#lx connected=%d softconnect=%d\\n",\n'
+            + indent + "\tdwc->ep0_expect_in, event->endpoint_number, event->status,\n"
+            + indent + "\tdwc->ep0state, dwc->ep0_next_event, dep->resource_index,\n"
+            + indent + "\tdep->flags, dwc->connected, dwc->softconnect);"
+        )
+    text, count = pattern.subn(enrich, text, count=1)
+    if count != 1:
+        raise SystemExit(
+            "Could not uniquely locate DWC3 EP0 direction-mismatch log: "
+            + str(count)
+        )
+source.write_text(text)
+print("Applied RG353PS DWC3 EP0 mismatch diagnostics")
+PYCODE
+
+      # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
       test -s /regdb-fw/regulatory.db.p7s
