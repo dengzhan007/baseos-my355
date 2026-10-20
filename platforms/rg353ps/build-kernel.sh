@@ -117,6 +117,10 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
         patch -s -p1 -d "$SRC" --batch --forward < "$patch_file"
       done
       for patch_file in /inputs/patches/mainline-rockchip/*.patch; do
+        if [ "$(basename "$patch_file")" = "0007-usb-mass-storage-command-diagnostics.patch" ]; then
+          echo "  skip mass-storage diagnostics patch; using checked source edits below"
+          continue
+        fi
         echo "  patch: mainline-rockchip/$(basename "$patch_file")"
         patch -s -p1 -d "$SRC" --batch --forward < "$patch_file"
       done
@@ -646,6 +650,80 @@ else:
     text = text[:line_start] + replacement + text[line_end:]
 source.write_text(text)
 print("Applied RG353PS DWC3 EP0 mismatch diagnostics")
+PYCODE
+
+      # Add checked diagnostics to the existing USB mass-storage function. These
+      # source edits use exact markers instead of a hand-maintained unified diff.
+      python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
+text = source.read_text()
+
+include_old = "#include <linux/fs.h>\n#include <linux/kstrtox.h>"
+include_new = "#include <linux/fs.h>\n#include <linux/jiffies.h>\n#include <linux/kstrtox.h>"
+if include_new not in text:
+    count = text.count(include_old)
+    if count != 1:
+        raise SystemExit("Could not uniquely locate mass-storage include insertion point: " + str(count))
+    text = text.replace(include_old, include_new, 1)
+
+start_marker = "\tstatic char\t\tunknown[16];\n\n\tdump_cdb(common);"
+start_lines = [
+    "\tstatic char\t\tunknown[16];",
+    "\tstatic unsigned int rg353ps_storage_seq;",
+    "\tunsigned int rg353ps_storage_id = 0;",
+    "\tunsigned long rg353ps_storage_started = 0;",
+    "",
+    "\tif (common->cmnd[0] == 0x0a || common->cmnd[0] == 0x2a ||",
+    "\t    common->cmnd[0] == 0xaa || common->cmnd[0] == 0x8a ||",
+    "\t    common->cmnd[0] == 0x35) {",
+    "\t\trg353ps_storage_id = ++rg353ps_storage_seq;",
+    "\t\trg353ps_storage_started = jiffies;",
+    "\t\tpr_info(\"baseos-msdiag: SCSI start seq=%u op=0x%02x \"",
+    "\t\t\t\"len=%u dir=%d cdb2-5=%02x%02x%02x%02x \"",
+    "\t\t\t\"cdb7-8=%02x%02x" + chr(92) + "n\",",
+    "\t\t\trg353ps_storage_id, common->cmnd[0],",
+    "\t\t\tcommon->data_size, common->data_dir,",
+    "\t\t\tcommon->cmnd[2], common->cmnd[3],",
+    "\t\t\tcommon->cmnd[4], common->cmnd[5],",
+    "\t\t\tcommon->cmnd[7], common->cmnd[8]);",
+    "\t}",
+    "\tdump_cdb(common);",
+]
+start_replacement = "\n".join(start_lines)
+count = text.count(start_marker)
+if count != 1:
+    raise SystemExit("Could not uniquely locate SCSI command entry point: " + str(count))
+text = text.replace(start_marker, start_replacement, 1)
+
+finish_marker = (
+    "\t\tcommon->residue -= reply;\n"
+    "\t}\t\t\t\t/* Otherwise it" + chr(39) + "s already set */\n\n"
+    "\treturn 0;\n}"
+)
+finish_lines = [
+    "\t\tcommon->residue -= reply;",
+    "\t}\t\t\t\t/* Otherwise it" + chr(39) + "s already set */",
+    "",
+    "\tif (rg353ps_storage_id &&",
+    "\t    (common->cmnd[0] == 0x35 || !(rg353ps_storage_id & 63)))",
+    "\t\tpr_info(\"baseos-msdiag: SCSI finish seq=%u op=0x%02x \"",
+    "\t\t\t\"reply=%d phase_error=%d residue=%u elapsed_ms=%u" + chr(92) + "n\",",
+    "\t\t\trg353ps_storage_id, common->cmnd[0], reply,",
+    "\t\t\tcommon->phase_error, common->residue,",
+    "\t\t\tjiffies_to_msecs(jiffies - rg353ps_storage_started));",
+    "\treturn 0;",
+    "}",
+]
+finish_replacement = "\n".join(finish_lines)
+count = text.count(finish_marker)
+if count != 1:
+    raise SystemExit("Could not uniquely locate SCSI command completion point: " + str(count))
+text = text.replace(finish_marker, finish_replacement, 1)
+
+source.write_text(text)
+print("Applied RG353PS SCSI write and cache-flush diagnostics")
 PYCODE
 
       # cfg80211 is built into this kernel and can request the regdb before
