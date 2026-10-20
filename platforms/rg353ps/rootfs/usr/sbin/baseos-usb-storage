@@ -24,6 +24,8 @@ BOUND=0
 CABLE_TRIGGERED=0
 CREATED_GADGET=0
 BOOT_MODE=0
+RESET_NOT_CONFIGURED_SECONDS=0
+RESET_RECOVERY_ATTEMPTED=0
 PROMPT_PID=
 : > "$DIAG_LOG"
 # BASEOS_BOOT_LIVE_LOG_V1: mirror logs to BOOT so forced power-off preserves progress.
@@ -202,7 +204,7 @@ snapshot() {
     read_usb_attr "$G/configs/b.1/$attr"
   done
   read_usb_attr "$G/configs/b.1/strings/0x409/configuration"
-  for attr in file ro removable cdrom nofua inquiry_string; do
+  for attr in file ro removable cdrom nofua stall num_buffers inquiry_string; do
     read_usb_attr "$G/functions/mass_storage.0/lun.0/$attr"
   done
   for p in /sys/kernel/debug/usb/"$UDC"/ep0out/transfer_type /sys/kernel/debug/usb/"$UDC"/ep0in/transfer_type /sys/kernel/debug/usb/"$UDC"/ep0out/queued /sys/kernel/debug/usb/"$UDC"/ep0in/queued; do
@@ -253,7 +255,7 @@ trap cleanup EXIT INT TERM HUP
 [ ! -e "$ACTIVE" ] || exit 1
 : > "$ACTIVE"
 HELPER_CKSUM="$(cksum "$0" 2>/dev/null | awk '{print $1 ":" $2}')"
-log "helper_revision=usb-cable-probe-v2 cksum=$HELPER_CKSUM"
+log "helper_revision=usb-cable-recovery-v3 cksum=$HELPER_CKSUM"
 # Prefer the removable frontend card (usually the left TF slot). If absent,
 # export only the dedicated BASEOS_DATA partition, never the boot/root system.
 if is_mounted /mnt/TF2; then
@@ -377,7 +379,7 @@ while [ "$i" -lt 3600 ]; do
     log "transfer heartbeat elapsed=$i seconds udc_state=$hb_state speed=$hb_speed data_cable=$hb_cable"
     hb_disk="$(grep -E ' mmcblk0(p[0-9]+)? ' /proc/diskstats 2>/dev/null | tr '\n' ';')"
     [ -z "$hb_disk" ] || log "diskstats $hb_disk"
-    hb_errors="$(dmesg 2>/dev/null | awk -v start="$KERNEL_ERR_START_SEC" '{ if (match($0, /^\[[[:space:]]*[0-9.]+/)) { t=substr($0, RSTART, RLENGTH); sub(/^\[[[:space:]]*/, "", t); if ((t+0) >= (start+0)) print } }' | grep -Ei 'mmc.*(error|timeout|reset)|I/O error|Buffer I/O|dwc3.*(error|timeout)|usb.*(error|reset)' | grep -v 'baseos-usb-storage:' | tail -n 5 | tr '\n' ';')"
+    hb_errors="$(dmesg 2>/dev/null | awk -v start="$KERNEL_ERR_START_SEC" '{ if (match($0, /^\[[[:space:]]*[0-9.]+/)) { t=substr($0, RSTART, RLENGTH); sub(/^\[[[:space:]]*/, "", t); if ((t+0) >= (start+0)) print } }' | grep -Ei 'mmc.*(error|timeout|reset)|I/O error|Buffer I/O|dwc3.*(error|timeout|unexpected|failed|end transfer)|ep0.*(error|failed)|usb.*(error|reset)' | grep -v 'baseos-usb-storage:' | tail -n 5 | tr '\n' ';')"
     if [ -n "$hb_errors" ] && [ "$hb_errors" != "$LAST_KERNEL_ERRORS" ]; then
       log "kernel events since storage start: $hb_errors"
       LAST_KERNEL_ERRORS="$hb_errors"
@@ -397,6 +399,7 @@ while [ "$i" -lt 3600 ]; do
       seen=1
       detached=0
       LAST_RESET_STATE=
+      RESET_NOT_CONFIGURED_SECONDS=0
       ;;
     suspended)
       # A suspend state is only valid evidence of a previously enumerated USB
@@ -408,7 +411,9 @@ while [ "$i" -lt 3600 ]; do
         if is_data_cable_connected; then
           detached=0
           LAST_RESET_STATE=
+          RESET_NOT_CONFIGURED_SECONDS=0
         else
+          RESET_NOT_CONFIGURED_SECONDS=0
           [ "$detached" -ne 0 ] || log_cable_probe_inputs "udc-state-$state"
           detached=$((detached+1))
         fi
@@ -430,7 +435,31 @@ while [ "$i" -lt 3600 ]; do
             LAST_RESET_STATE="$state"
           fi
           detached=0
+          RESET_NOT_CONFIGURED_SECONDS=$((RESET_NOT_CONFIGURED_SECONDS+1))
+          # A brief default/addressed transition is an ordinary bus reset. If
+          # the host never returns to CONFIGURED and the cable stays present,
+          # do one guarded soft reconnect to recover a wedged enumeration.
+          if [ "$RESET_NOT_CONFIGURED_SECONDS" -ge 15 ] && [ "$RESET_RECOVERY_ATTEMPTED" -eq 0 ]; then
+            RESET_RECOVERY_ATTEMPTED=1
+            soft="/sys/class/udc/$UDC/soft_connect"
+            log "UDC has remained state=$state for ${RESET_NOT_CONFIGURED_SECONDS}s with SDP/CDP still present; attempting one soft reconnect"
+            if [ -w "$soft" ] && printf '%s' disconnect > "$soft" 2>/dev/null; then
+              sleep 1
+              if printf '%s' connect > "$soft" 2>/dev/null; then
+                sleep 2
+                recovery_state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
+                recovery_speed="$(cat "/sys/class/udc/$UDC/current_speed" 2>/dev/null || echo unknown)"
+                log "UDC soft-reconnect result state=$recovery_state speed=$recovery_speed"
+              else
+                log "UDC soft reconnect failed while restoring connect"
+              fi
+            else
+              log "UDC soft reconnect unavailable or disconnect command failed"
+            fi
+            RESET_NOT_CONFIGURED_SECONDS=0
+          fi
         else
+          RESET_NOT_CONFIGURED_SECONDS=0
           [ "$detached" -ne 0 ] || log_cable_probe_inputs "udc-state-$state"
           detached=$((detached+1))
         fi
