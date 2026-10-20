@@ -639,8 +639,8 @@ else:
     indent = line[:len(line) - len(line.lstrip())]
     replacement = (
         indent + "dev_err(dwc->dev,\n"
-        + indent + "\t\"unexpected direction for Data Phase: expect_in=%d event_ep=%d event_status=%d ep0state=%d next_event=%d\\n\",\n"
-        + indent + "\tdwc->ep0_expect_in, event->endpoint_number, event->status,\n"
+        + indent + "\t\"unexpected direction for Data Phase: expect_in=%d event_ep=%d event_status=%d ep0state=%d next_event=%d\\\\n\",\n"
+            + indent + "\tdwc->ep0_expect_in, (int)event->endpoint_number, (int)event->status,\n"
         + indent + "\tdwc->ep0state, dwc->ep0_next_event);"
     )
     text = text[:line_start] + replacement + text[line_end:]
