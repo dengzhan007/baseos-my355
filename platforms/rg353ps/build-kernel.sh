@@ -639,7 +639,7 @@ else:
     indent = line[:len(line) - len(line.lstrip())]
     replacement = (
         indent + "dev_err(dwc->dev,\n"
-        + indent + "\t\"unexpected direction for Data Phase: expect_in=%d event_ep=%u event_status=%u ep0state=%d next_event=%d\\n\",\n"
+        + indent + "\t\"unexpected direction for Data Phase: expect_in=%d event_ep=%d event_status=%d ep0state=%d next_event=%d\\n\",\n"
         + indent + "\tdwc->ep0_expect_in, event->endpoint_number, event->status,\n"
         + indent + "\tdwc->ep0state, dwc->ep0_next_event);"
     )
