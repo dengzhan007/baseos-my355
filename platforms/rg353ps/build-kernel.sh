@@ -608,37 +608,42 @@ source.write_text(text)
 print("Disabled USB2 LPM advertisement for the RG353PS peripheral gadget")
 PYCODE
 
-      # Capture controller-side EP0 context when Linux detects a direction mismatch.
-      # Do not change recovery behavior until the expected and observed stages are known.
+      # Add context to DWC3 EP0 direction-mismatch messages without changing recovery behavior.
+      # Locate the upstream log by its message instead of assuming one exact C-line format.
       python3 - <<PYCODE
 from pathlib import Path
 import re
 
 source = Path("$SRC/drivers/usb/dwc3/ep0.c")
 text = source.read_text()
-marker = "expect_in=%u event_ep=%u ep0state=%d"
+marker = "expect_in=%d event_ep=%u event_status=%u ep0state=%d next_event=%d"
 if marker in text:
     if text.count(marker) != 1:
         raise SystemExit("DWC3 EP0 diagnostic marker is not unique")
 else:
-    pattern = re.compile(
-        r"(?m)^([ \t]*)dev_err\(dwc->dev, \"unexpected direction for Data Phase\\n\"\);$"
-    )
-    def enrich(match):
-        indent = match.group(1)
-        return (
-            indent + "dev_err(dwc->dev,\n"
-            + indent + "\t\"unexpected direction for Data Phase: expect_in=%u event_ep=%u status=%u ep0state=%d next_event=%d resource_index=%u ep_flags=%#lx connected=%d softconnect=%d\\n\",\n"
-            + indent + "\tdwc->ep0_expect_in, event->endpoint_number, event->status,\n"
-            + indent + "\tdwc->ep0state, dwc->ep0_next_event, dep->resource_index,\n"
-            + indent + "\tdep->flags, dwc->connected, dwc->softconnect);"
-        )
-    text, count = pattern.subn(enrich, text, count=1)
-    if count != 1:
+    message = "unexpected direction for Data Phase"
+    positions = [m.start() for m in re.finditer(re.escape(message), text)]
+    if len(positions) != 1:
         raise SystemExit(
-            "Could not uniquely locate DWC3 EP0 direction-mismatch log: "
-            + str(count)
+            "Could not uniquely locate DWC3 EP0 direction-mismatch message: "
+            + str(len(positions))
         )
+    pos = positions[0]
+    line_start = text.rfind("\n", 0, pos) + 1
+    line_end = text.find("\n", pos)
+    if line_end < 0:
+        line_end = len(text)
+    line = text[line_start:line_end]
+    if "dev_err" not in line:
+        raise SystemExit("DWC3 EP0 direction-mismatch message is not in dev_err")
+    indent = line[:len(line) - len(line.lstrip())]
+    replacement = (
+        indent + "dev_err(dwc->dev,\n"
+        + indent + "\t\"unexpected direction for Data Phase: expect_in=%d event_ep=%u event_status=%u ep0state=%d next_event=%d\\n\",\n"
+        + indent + "\tdwc->ep0_expect_in, event->endpoint_number, event->status,\n"
+        + indent + "\tdwc->ep0state, dwc->ep0_next_event);"
+    )
+    text = text[:line_start] + replacement + text[line_end:]
 source.write_text(text)
 print("Applied RG353PS DWC3 EP0 mismatch diagnostics")
 PYCODE
