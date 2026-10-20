@@ -57,25 +57,35 @@ is_data_cable_connected() {
   # Prefer the UDC's supplier-PHY extcon entries when this kernel exposes them.
   for cable in /sys/devices/platform/"$UDC"/supplier:platform:*usb2phy/extcon/*/cable.*; do
     [ -r "$cable/name" ] && [ -r "$cable/state" ] || continue
-    name="$(cat "$cable/name" 2>/dev/null)"
-    case "$name" in
+    probe_name="$(cat "$cable/name" 2>/dev/null)"
+    case "$probe_name" in
       SDP|CDP)
         [ "$(cat "$cable/state" 2>/dev/null)" = "1" ] && return 0
         ;;
     esac
   done
-  # Some RK3566 kernels expose the active cable only through /sys/class/extcon.
-  # The RG353PS DC/OTG PHY reports CDP=1 while attached to a PC in this setup.
+  # Some RK3566 kernels expose only the aggregate state through /sys/class/extcon.
+  # Match SDP/CDP as complete whitespace-delimited tokens, not a shell glob.
   for extcon in /sys/class/extcon/*; do
     [ -r "$extcon/name" ] && [ -r "$extcon/state" ] || continue
-    name="$(cat "$extcon/name" 2>/dev/null)"
-    case "$name" in *usb2phy*) ;; *) continue ;; esac
-    state="$(cat "$extcon/state" 2>/dev/null)"
-    case " $state " in
-      *" SDP=1 "*|*" CDP=1 "*) return 0 ;;
-    esac
+    probe_name="$(cat "$extcon/name" 2>/dev/null)"
+    case "$probe_name" in *usb2phy*) ;; *) continue ;; esac
+    probe_state="$(cat "$extcon/state" 2>/dev/null)"
+    if printf '%s\n' "$probe_state" | grep -Eq '(^|[[:space:]])(SDP|CDP)=1([[:space:]]|$)'; then
+      return 0
+    fi
   done
   return 1
+}
+log_cable_probe_inputs() {
+  probe_reason="$1"
+  for probe_extcon in /sys/class/extcon/*; do
+    [ -r "$probe_extcon/name" ] && [ -r "$probe_extcon/state" ] || continue
+    probe_name="$(cat "$probe_extcon/name" 2>/dev/null)"
+    case "$probe_name" in *usb2phy*) ;; *) continue ;; esac
+    probe_state="$(cat "$probe_extcon/state" 2>/dev/null)"
+    log "cable detector input reason=$probe_reason path=$probe_extcon name=$probe_name state=$probe_state"
+  done
 }
 ep0_control_ready() {
   [ -r "/sys/kernel/debug/usb/$UDC/ep0out/transfer_type" ] &&
@@ -242,6 +252,8 @@ trap cleanup EXIT INT TERM HUP
 
 [ ! -e "$ACTIVE" ] || exit 1
 : > "$ACTIVE"
+HELPER_CKSUM="$(cksum "$0" 2>/dev/null | awk '{print $1 ":" $2}')"
+log "helper_revision=usb-cable-probe-v2 cksum=$HELPER_CKSUM"
 # Prefer the removable frontend card (usually the left TF slot). If absent,
 # export only the dedicated BASEOS_DATA partition, never the boot/root system.
 if is_mounted /mnt/TF2; then
@@ -357,7 +369,11 @@ while [ "$i" -lt 3600 ]; do
     hb_state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
     hb_speed="$(cat "/sys/class/udc/$UDC/current_speed" 2>/dev/null || echo unknown)"
     hb_cable=no
-    is_data_cable_connected && hb_cable=yes
+    if is_data_cable_connected; then
+      hb_cable=yes
+    else
+      log_cable_probe_inputs "heartbeat-${i}s"
+    fi
     log "transfer heartbeat elapsed=$i seconds udc_state=$hb_state speed=$hb_speed data_cable=$hb_cable"
     hb_disk="$(grep -E ' mmcblk0(p[0-9]+)? ' /proc/diskstats 2>/dev/null | tr '\n' ';')"
     [ -z "$hb_disk" ] || log "diskstats $hb_disk"
@@ -393,6 +409,7 @@ while [ "$i" -lt 3600 ]; do
           detached=0
           LAST_RESET_STATE=
         else
+          [ "$detached" -ne 0 ] || log_cable_probe_inputs "udc-state-$state"
           detached=$((detached+1))
         fi
       elif [ "$i" -ge 45 ]; then
