@@ -608,8 +608,8 @@ source.write_text(text)
 print("Disabled USB2 LPM advertisement for the RG353PS peripheral gadget")
 PYCODE
 
-      # Capture the controller-side EP0 context when Linux detects a direction mismatch.
-      # Keep normal recovery semantics unchanged until logs identify the failing stage.
+      # Capture controller-side EP0 context when Linux detects a direction mismatch.
+      # Do not change recovery behavior until the expected and observed stages are known.
       python3 - <<PYCODE
 from pathlib import Path
 import re
@@ -622,13 +622,13 @@ if marker in text:
         raise SystemExit("DWC3 EP0 diagnostic marker is not unique")
 else:
     pattern = re.compile(
-        r'(?m)^([ \t]*)dev_err\(dwc->dev, "unexpected direction for Data Phase\\n"\);$'
+        r"(?m)^([ \t]*)dev_err\(dwc->dev, \"unexpected direction for Data Phase\\n\"\);$"
     )
     def enrich(match):
         indent = match.group(1)
         return (
             indent + "dev_err(dwc->dev,\n"
-            + indent + '\t"unexpected direction for Data Phase: expect_in=%u event_ep=%u status=%u ep0state=%d next_event=%d resource_index=%u ep_flags=%#lx connected=%d softconnect=%d\\n",\n'
+            + indent + "\t\"unexpected direction for Data Phase: expect_in=%u event_ep=%u status=%u ep0state=%d next_event=%d resource_index=%u ep_flags=%#lx connected=%d softconnect=%d\\n\",\n"
             + indent + "\tdwc->ep0_expect_in, event->endpoint_number, event->status,\n"
             + indent + "\tdwc->ep0state, dwc->ep0_next_event, dep->resource_index,\n"
             + indent + "\tdep->flags, dwc->connected, dwc->softconnect);"
