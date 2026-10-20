@@ -37,7 +37,7 @@
  
 @@ -2174,5 +2192,12 @@ static int do_scsi_command(struct fsg_common *common)
  		common->residue -= reply;
- 	} /* Otherwise it's already set */
+ 	}				/* Otherwise it's already set */
  
 +	if (rg353ps_storage_id &&
 +	    (common->cmnd[0] == 0x35 || !(rg353ps_storage_id & 63)))
