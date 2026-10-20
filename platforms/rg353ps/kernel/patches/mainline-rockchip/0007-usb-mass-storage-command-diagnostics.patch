@@ -10,7 +10,7 @@ index 0000000..0000000 100644
  #include <linux/kstrtox.h>
  #include <linux/kthread.h>
  #include <linux/sched/signal.h>
-@@ -1862,9 +1863,28 @@ static int do_scsi_command(struct fsg_common *common)
+@@ -1862,9 +1863,22 @@ static int do_scsi_command(struct fsg_common *common)
  {
  	struct fsg_buffhd *bh;
  	int rc;
@@ -37,12 +37,12 @@ index 0000000..0000000 100644
 +	}
  	dump_cdb(common);
  
- 	/* Wait for the next buffer to become available for data or status */
-@@ -2177,6 +2197,12 @@ static int do_scsi_command(struct fsg_common *common)
+@@ -2174,5 +2188,11 @@ static int do_scsi_command(struct fsg_common *common)
  		common->residue -= reply;
  	} /* Otherwise it's already set */
  
-+	if (rg353ps_storage_id)
++	if (rg353ps_storage_id &&
++	    (common->cmnd[0] == 0x35 || !(rg353ps_storage_id & 63)))
 +		pr_info("baseos-msdiag: SCSI finish seq=%u op=0x%02x "
 +			"reply=%d phase_error=%d residue=%u elapsed_ms=%u\n",
 +			rg353ps_storage_id, common->cmnd[0], reply,
