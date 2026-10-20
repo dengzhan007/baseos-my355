@@ -431,6 +431,7 @@ while [ "$i" -lt 3600 ]; do
           fi
           detached=0
         else
+          [ "$detached" -ne 0 ] || log_cable_probe_inputs "udc-state-$state"
           detached=$((detached+1))
         fi
       elif [ "$i" -ge 45 ]; then
