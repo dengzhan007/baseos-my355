@@ -623,11 +623,11 @@ text = source.read_text()
 bs = chr(92)
 
 # Record each setup request so a later EP0 failure can be tied to the host request.
-setup_anchor = "\tlen = le16_to_cpu(ctrl->wLength);"
+setup_anchor = "\tif ((ctrl->bRequestType & USB_TYPE_MASK) == USB_TYPE_STANDARD)"
 setup_marker = "RG353PS EP0 SETUP type=%02x"
 if setup_marker not in text:
     if text.count(setup_anchor) != 1:
-        raise SystemExit("Could not uniquely locate DWC3 EP0 SETUP parser")
+        raise SystemExit("Could not uniquely locate post-parse DWC3 EP0 SETUP logging point")
     setup_lines = [
         "\tdev_info(dwc->dev,",
         "\t\t\"RG353PS EP0 SETUP type=%02x req=%02x value=%04x index=%04x len=%u state=%d expect_in=%u next=%d pending=%u connected=%u softconnect=%u pullups=%u" + bs + "n\",",
@@ -638,7 +638,7 @@ if setup_marker not in text:
         "\t\tdwc->pullups_connected);",
     ]
     setup_diag = "\n".join(setup_lines)
-    text = text.replace(setup_anchor, setup_anchor + "\n" + setup_diag, 1)
+    text = text.replace(setup_anchor, setup_diag + "\n\n" + setup_anchor, 1)
 
 # Expand the wrong-direction message with the endpoint resource state.
 direction_marker = "expect_in=%d event_ep=%d event_status=%d ep0state=%d next_event=%d"
