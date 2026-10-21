@@ -711,7 +711,7 @@ if guard_marker not in text:
         raise SystemExit("Could not locate DWC3 EP0 XferNotReady status switch")
     guard_lines = [
         "\tif (dwc->ep0state == EP0_SETUP_PHASE &&",
-        "\t    dwc->ep0_next_event == DWC3_EP0_COMPLETE &&",
+        "\t    dwc->ep0_next_event != DWC3_EP0_NRDY_DATA &&",
         "\t    event->status == DEPEVT_STATUS_CONTROL_DATA &&",
         "\t    dwc->ep0_expect_in != event->endpoint_number) {",
         "\t\tdev_warn_ratelimited(dwc->dev,",
