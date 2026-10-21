@@ -695,6 +695,37 @@ if end_context_marker not in text:
     )
     text = text.replace(old_end, new_end, 1)
 
+# The controller may report an old XferNotReady(DATA) after a new SETUP has
+# already started and EP0 is still waiting for its transfer-complete event.
+# In that state, do not mistake the stale direction for a live data-phase
+# direction error and stall/restart the control endpoint.
+guard_marker = "RG353PS ignoring stale EP0 DATA-not-ready"
+if guard_marker not in text:
+    fn_start = text.find("static void dwc3_ep0_xfernotready(")
+    if fn_start < 0:
+        raise SystemExit("Could not locate DWC3 EP0 XferNotReady handler")
+    brace = text.find("{", fn_start)
+    switch_marker = "\n\tswitch (event->status) {"
+    switch_at = text.find(switch_marker, brace)
+    if brace < 0 or switch_at < 0:
+        raise SystemExit("Could not locate DWC3 EP0 XferNotReady status switch")
+    guard_lines = [
+        "\tif (dwc->ep0state == EP0_SETUP_PHASE &&",
+        "\t    dwc->ep0_next_event == DWC3_EP0_COMPLETE &&",
+        "\t    event->status == DEPEVT_STATUS_CONTROL_DATA &&",
+        "\t    dwc->ep0_expect_in != event->endpoint_number) {",
+        "\t\tdev_warn_ratelimited(dwc->dev,",
+        "\t\t\t\"RG353PS ignoring stale EP0 DATA-not-ready while waiting for completion: event_ep=%u expect_in=%u ep0state=%d next_event=%d" + bs + "n\",",
+        "\t\t\tevent->endpoint_number, dwc->ep0_expect_in,",
+        "\t\t\tdwc->ep0state, dwc->ep0_next_event);",
+        "\t\treturn;",
+        "\t}",
+    ]
+    text = text[:switch_at] + "\n" + "\n".join(guard_lines) + text[switch_at:]
+
+source.write_text(text)
+print("Applied RG353PS DWC3 EP0 request diagnostics and stale-event guard")
+
 source.write_text(text)
 print("Applied RG353PS DWC3 EP0 request and timeout diagnostics")
 PYCODE
