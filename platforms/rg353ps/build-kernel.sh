@@ -724,10 +724,7 @@ if guard_marker not in text:
     text = text[:switch_at] + "\n" + "\n".join(guard_lines) + text[switch_at:]
 
 source.write_text(text)
-print("Applied RG353PS DWC3 EP0 request diagnostics and stale-event guard")
-
-source.write_text(text)
-print("Applied RG353PS DWC3 EP0 request and timeout diagnostics")
+print("Applied RG353PS DWC3 EP0 request diagnostics, stale-event guard, and timeout context")
 PYCODE
 
       # Add checked diagnostics to the existing USB mass-storage function. These
