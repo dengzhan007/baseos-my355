@@ -14,6 +14,7 @@ KERNEL_ERR_START_SEC="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
 LAST_KERNEL_ERRORS=
 LAST_SCSI_START_SEQ=0
 LAST_SCSI_FINISH_SEQ=0
+LAST_EP0_SETUPS=
 CONFIGFS=/sys/kernel/config
 G="$CONFIGFS/usb_gadget/rockchip"
 UDC=
@@ -214,6 +215,11 @@ snapshot() {
   done
   dump_usb_status
   if command -v dmesg >/dev/null 2>&1; then
+    # Keep EP0 SETUP records separately: SCSI WRITE diagnostics can evict them
+    # from a fixed dmesg tail before the failure snapshot is collected.
+    dmesg 2>/dev/null | grep -F 'RG353PS EP0 SETUP' | tail -n 16 | while IFS= read -r ep0_setup_line; do
+      [ -z "$ep0_setup_line" ] || log "EP0 SETUP history: $ep0_setup_line"
+    done
     dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|dwc3|usb|phy|gadget|udc|ep0out|mass.storage|vbus|extcon|role.switch|rockchip-usb2phy|otg' | tail -n 100 >> "$DIAG_LOG" || :
   fi
 }
@@ -421,6 +427,15 @@ while [ "$i" -lt 3600 ]; do
       printf '%s\n' "$hb_scsi_new" | while IFS= read -r hb_scsi_line; do
         [ -z "$hb_scsi_line" ] || log "SCSI command diagnostic: $hb_scsi_line"
       done
+    fi
+    # Preserve the recent EP0 SETUP sequence at each heartbeat, but only emit
+    # it again if that sequence changed since the previous heartbeat.
+    hb_ep0_setups="$(dmesg 2>/dev/null | grep -F 'RG353PS EP0 SETUP' | tail -n 12)"
+    if [ -n "$hb_ep0_setups" ] && [ "$hb_ep0_setups" != "$LAST_EP0_SETUPS" ]; then
+      printf '%s\n' "$hb_ep0_setups" | while IFS= read -r hb_ep0_setup_line; do
+        [ -z "$hb_ep0_setup_line" ] || log "recent EP0 SETUP: $hb_ep0_setup_line"
+      done
+      LAST_EP0_SETUPS="$hb_ep0_setups"
     fi
     case "$hb_scsi_max_start" in
       ''|*[!0-9]*) ;;
