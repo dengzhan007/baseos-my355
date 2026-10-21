@@ -698,7 +698,6 @@ if end_context_marker not in text:
 source.write_text(text)
 print("Applied RG353PS DWC3 EP0 request and timeout diagnostics")
 PYCODE
-PYCODE
 
       # Add checked diagnostics to the existing USB mass-storage function. These
       # source edits use exact markers instead of a hand-maintained unified diff.
