@@ -726,8 +726,8 @@ if count != 1:
 text = text.replace(finish_marker, finish_replacement, 1)
 
 # Instrument abnormal USB bulk-OUT completions using stable callback boundaries.
-bulk_out_begin = '\tdump_msg(common, "bulk-out", req->buf, req->actual);'
-bulk_out_end = '\tif (req->status == -ECONNRESET)'
+bulk_out_begin = "\tdump_msg(common, \"bulk-out\", req->buf, req->actual);"
+bulk_out_end = "\tif (req->status == -ECONNRESET)"
 begin_count = text.count(bulk_out_begin)
 end_count = text.count(bulk_out_end)
 if begin_count != 1 or end_count != 1:
@@ -736,16 +736,17 @@ begin = text.index(bulk_out_begin)
 end = text.index(bulk_out_end, begin)
 if end <= begin:
     raise SystemExit("Bulk-OUT callback boundary order is invalid")
-bulk_out_replacement = (
-    '\tdump_msg(common, "bulk-out", req->buf, req->actual);\n'
-    '\tif (req->status || req->actual != bh->bulk_out_intended_length) {\n'
-    '\t\tpr_info("baseos-msdiag: BULK OUT mismatch op=0x%02x status=%d actual=%u intended=%u\\n",\n'
-    '\t\t\tcommon->cmnd[0], req->status, req->actual,\n'
-    '\t\t\tbh->bulk_out_intended_length);\n'
-    '\t\tDBG(common, "%s --> %d, %u/%u\\n", __func__,\n'
-    '\t\t    req->status, req->actual, bh->bulk_out_intended_length);\n'
-    '\t}\n'
-)
+bulk_out_lines = [
+    "\tdump_msg(common, \"bulk-out\", req->buf, req->actual);",
+    "\tif (req->status || req->actual != bh->bulk_out_intended_length) {",
+    "\t\tpr_info(\"baseos-msdiag: BULK OUT mismatch op=0x%02x status=%d actual=%u intended=%u\\n\",",
+    "\t\t\tcommon->cmnd[0], req->status, req->actual,",
+    "\t\t\tbh->bulk_out_intended_length);",
+    "\t\tDBG(common, \"%s --> %d, %u/%u\\n\", __func__,",
+    "\t\t    req->status, req->actual, bh->bulk_out_intended_length);",
+    "\t}",
+]
+bulk_out_replacement = "\n".join(bulk_out_lines) + "\n"
 text = text[:begin] + bulk_out_replacement + text[end:]
 
 source.write_text(text)
