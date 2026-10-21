@@ -12,7 +12,7 @@ DIAG_LOG=/run/rg353ps-usb-storage.log
 BOOT_LOG=/mnt/boot/rg353ps-usb-storage.log
 KERNEL_ERR_START_SEC="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
 LAST_KERNEL_ERRORS=
-LAST_SCSI_DIAGNOSTICS=
+LAST_SCSI_SEQ=0
 CONFIGFS=/sys/kernel/config
 G="$CONFIGFS/usb_gadget/rockchip"
 UDC=
@@ -380,15 +380,29 @@ while [ "$i" -lt 3600 ]; do
     log "transfer heartbeat elapsed=$i seconds udc_state=$hb_state speed=$hb_speed data_cable=$hb_cable"
     hb_disk="$(grep -E ' mmcblk0(p[0-9]+)? ' /proc/diskstats 2>/dev/null | tr '\n' ';')"
     [ -z "$hb_disk" ] || log "diskstats $hb_disk"
-    # Preserve the kernel's targeted mass-storage trace. The normal USB status
-    # filter does not match this prefix; without this explicit capture, SCSI
-    # WRITE/SYNCHRONIZE CACHE diagnostics can exist in dmesg but never reach
-    # the TF1 log. Log only when the recent trace window changes to limit noise.
-    hb_scsi="$(dmesg 2>/dev/null | grep -F 'baseos-msdiag:' | tail -n 16 | tr '\n' ';')"
-    if [ -n "$hb_scsi" ] && [ "$hb_scsi" != "$LAST_SCSI_DIAGNOSTICS" ]; then
-      log "SCSI command diagnostics (recent kernel tail): $hb_scsi"
-      LAST_SCSI_DIAGNOSTICS="$hb_scsi"
+    # Preserve new SCSI entries by their monotonically increasing command
+    # sequence number. A fixed dmesg tail can miss the WRITE that stalled if
+    # PHY polling produces enough lines afterward.
+    hb_scsi_batch="$(dmesg 2>/dev/null | grep -F 'baseos-msdiag:' | awk -v last="$LAST_SCSI_SEQ" '
+      {
+        if (match($0, /seq=[0-9]+/)) {
+          seq = substr($0, RSTART + 4, RLENGTH - 4) + 0
+          if (seq > max) max = seq
+          if (seq > last) print $0
+        }
+      }
+      END { print "__BASEOS_MAX_SEQ=" (max + 0) }
+    ')"
+    hb_scsi_max="$(printf '%s\n' "$hb_scsi_batch" | sed -n 's/^__BASEOS_MAX_SEQ=//p' | tail -n 1)"
+    hb_scsi_new="$(printf '%s\n' "$hb_scsi_batch" | grep -v '^__BASEOS_MAX_SEQ=' || :)"
+    if [ -n "$hb_scsi_new" ]; then
+      hb_scsi_log="$(printf '%s\n' "$hb_scsi_new" | tr '\n' ';')"
+      log "SCSI command diagnostics after seq=$LAST_SCSI_SEQ: $hb_scsi_log"
     fi
+    case "$hb_scsi_max" in
+      ''|*[!0-9]*) ;;
+      *) [ "$hb_scsi_max" -le "$LAST_SCSI_SEQ" ] || LAST_SCSI_SEQ="$hb_scsi_max" ;;
+    esac
     hb_errors="$(dmesg 2>/dev/null | awk -v start="$KERNEL_ERR_START_SEC" '{ if (match($0, /^\[[[:space:]]*[0-9.]+/)) { t=substr($0, RSTART, RLENGTH); sub(/^\[[[:space:]]*/, "", t); if ((t+0) >= (start+0)) print } }' | grep -Ei 'mmc.*(error|timeout|reset)|I/O error|Buffer I/O|dwc3.*(error|timeout|unexpected|failed|end transfer)|ep0.*(error|failed)|usb.*(error|reset)' | grep -v 'baseos-usb-storage:' | tail -n 5 | tr '\n' ';')"
     if [ -n "$hb_errors" ] && [ "$hb_errors" != "$LAST_KERNEL_ERRORS" ]; then
       log "kernel events since storage start: $hb_errors"
