@@ -612,26 +612,41 @@ source.write_text(text)
 print("Disabled USB2 LPM advertisement for the RG353PS peripheral gadget")
 PYCODE
 
-      # Add context to DWC3 EP0 direction-mismatch messages without changing recovery behavior.
-      # Locate the upstream log by its message instead of assuming one exact C-line format.
+      # Add EP0 setup, direction mismatch, and ENDTRANSFER timeout diagnostics.
+      # These edits only add logging; they preserve the upstream recovery behavior.
       python3 - <<PYCODE
 from pathlib import Path
 import re
 
 source = Path("$SRC/drivers/usb/dwc3/ep0.c")
 text = source.read_text()
-marker = "expect_in=%d event_ep=%u event_status=%u ep0state=%d next_event=%d"
-if marker in text:
-    if text.count(marker) != 1:
-        raise SystemExit("DWC3 EP0 diagnostic marker is not unique")
-else:
+bs = chr(92)
+
+# Record each setup request so a later EP0 failure can be tied to the host request.
+setup_anchor = "\tlen = le16_to_cpu(ctrl->wLength);"
+setup_marker = "RG353PS EP0 SETUP type=%02x"
+if setup_marker not in text:
+    if text.count(setup_anchor) != 1:
+        raise SystemExit("Could not uniquely locate DWC3 EP0 SETUP parser")
+    setup_lines = [
+        "\tdev_info(dwc->dev,",
+        "\t\t\"RG353PS EP0 SETUP type=%02x req=%02x value=%04x index=%04x len=%u state=%d expect_in=%u next=%d pending=%u connected=%u softconnect=%u pullups=%u" + bs + "n\",",
+        "\t\tctrl->bRequestType, ctrl->bRequest,",
+        "\t\tle16_to_cpu(ctrl->wValue), le16_to_cpu(ctrl->wIndex), len,",
+        "\t\tdwc->ep0state, dwc->ep0_expect_in, dwc->ep0_next_event,",
+        "\t\tdwc->setup_packet_pending, dwc->connected, dwc->softconnect,",
+        "\t\tdwc->pullups_connected);",
+    ]
+    setup_diag = "\n".join(setup_lines)
+    text = text.replace(setup_anchor, setup_anchor + "\n" + setup_diag, 1)
+
+# Expand the wrong-direction message with the endpoint resource state.
+direction_marker = "expect_in=%d event_ep=%d event_status=%d ep0state=%d next_event=%d"
+if direction_marker not in text:
     message = "unexpected direction for Data Phase"
     positions = [m.start() for m in re.finditer(re.escape(message), text)]
     if len(positions) != 1:
-        raise SystemExit(
-            "Could not uniquely locate DWC3 EP0 direction-mismatch message: "
-            + str(len(positions))
-        )
+        raise SystemExit("Could not uniquely locate DWC3 EP0 direction-mismatch message: " + str(len(positions)))
     pos = positions[0]
     line_start = text.rfind("\n", 0, pos) + 1
     line_end = text.find("\n", pos)
@@ -641,15 +656,48 @@ else:
     if "dev_err" not in line:
         raise SystemExit("DWC3 EP0 direction-mismatch message is not in dev_err")
     indent = line[:len(line) - len(line.lstrip())]
-    replacement = (
-        indent + "dev_err(dwc->dev,\n"
-        + indent + "\t\"unexpected direction for Data Phase: expect_in=%d event_ep=%d event_status=%d ep0state=%d next_event=%d\\\\n\",\n"
-            + indent + "\tdwc->ep0_expect_in, (int)event->endpoint_number, (int)event->status,\n"
-        + indent + "\tdwc->ep0state, dwc->ep0_next_event);"
-    )
+    direction_lines = [
+        indent + "dev_err(dwc->dev,",
+        indent + "\t\"unexpected direction for Data Phase: expect_in=%d event_ep=%d event_status=%d ep0state=%d next_event=%d ep0out_ri=%u ep0in_ri=%u ep0out_flags=%x ep0in_flags=%x pending=%u connected=%u softconnect=%u pullups=%u" + bs + "n\",",
+        indent + "\tdwc->ep0_expect_in, (int)event->endpoint_number, (int)event->status,",
+        indent + "\tdwc->ep0state, dwc->ep0_next_event,",
+        indent + "\tdwc->eps[0]->resource_index, dwc->eps[1]->resource_index,",
+        indent + "\tdwc->eps[0]->flags, dwc->eps[1]->flags,",
+        indent + "\tdwc->setup_packet_pending, dwc->connected, dwc->softconnect,",
+        indent + "\tdwc->pullups_connected);",
+    ]
+    replacement = "\n".join(direction_lines)
     text = text[:line_start] + replacement + text[line_end:]
+
+# Include the endpoint command context when EP0 ENDTRANSFER times out.
+end_marker = "ep0 data phase end transfer failed: %d"
+end_context_marker = "ENDTRANSFER context dep=%u resource_index=%u"
+if end_context_marker not in text:
+    if text.count(end_marker) != 1:
+        raise SystemExit("Could not uniquely locate DWC3 EP0 ENDTRANSFER error")
+    old_end = (
+        "\tret = dwc3_send_gadget_ep_cmd(dep, cmd, &params);\n"
+        "\tif (ret)\n"
+        "\t\tdev_err_ratelimited(dwc->dev,\n"
+        "\t\t\t\"ep0 data phase end transfer failed: %d" + bs + "n\", ret);"
+    )
+    if text.count(old_end) != 1:
+        raise SystemExit("Could not uniquely locate complete DWC3 EP0 ENDTRANSFER call")
+    new_end = (
+        "\tret = dwc3_send_gadget_ep_cmd(dep, cmd, &params);\n"
+        "\tif (ret)\n"
+        "\t\tdev_err_ratelimited(dwc->dev,\n"
+        "\t\t\t\"ep0 data phase end transfer failed: %d ENDTRANSFER context dep=%u resource_index=%u flags=%x ep0state=%d expect_in=%u next_event=%d pending=%u connected=%u softconnect=%u pullups=%u" + bs + "n\",\n"
+        "\t\t\tret, dep->number, dep->resource_index, dep->flags,\n"
+        "\t\t\tdwc->ep0state, dwc->ep0_expect_in, dwc->ep0_next_event,\n"
+        "\t\t\tdwc->setup_packet_pending, dwc->connected, dwc->softconnect,\n"
+        "\t\t\tdwc->pullups_connected);"
+    )
+    text = text.replace(old_end, new_end, 1)
+
 source.write_text(text)
-print("Applied RG353PS DWC3 EP0 mismatch diagnostics")
+print("Applied RG353PS DWC3 EP0 request and timeout diagnostics")
+PYCODE
 PYCODE
 
       # Add checked diagnostics to the existing USB mass-storage function. These
