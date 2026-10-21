@@ -729,27 +729,30 @@ text = text.replace(finish_marker, finish_replacement, 1)
 # short transfer, keeping normal storage traffic quiet while distinguishing
 # a host/controller cancellation from an incomplete data stage.
 bulk_out_marker = (
+    "\tdump_msg(common, \"bulk-out\", req->buf, req->actual);\n"
     "\tif (req->status || req->actual != bh->bulk_out_intended_length)\n"
     "\t\tDBG(common, \"%s --> %d, %u/%u\\n\", __func__,\n"
-    "\t\t\treq->status, req->actual, bh->bulk_out_intended_length);"
+    "\t\t    req->status, req->actual, bh->bulk_out_intended_length);"
 )
 bulk_out_lines = [
+    "\tdump_msg(common, \"bulk-out\", req->buf, req->actual);",
     "\tif (req->status || req->actual != bh->bulk_out_intended_length) {",
     "\t\tpr_info(\"baseos-msdiag: BULK OUT mismatch op=0x%02x status=%d actual=%u intended=%u" + chr(92) + "n\",",
     "\t\t\tcommon->cmnd[0], req->status, req->actual,",
     "\t\t\tbh->bulk_out_intended_length);",
     "\t\tDBG(common, \"%s --> %d, %u/%u" + chr(92) + "n\", __func__,",
-    "\t\t\treq->status, req->actual, bh->bulk_out_intended_length);",
+    "\t\t    req->status, req->actual, bh->bulk_out_intended_length);",
     "\t}",
 ]
 bulk_out_replacement = "\n".join(bulk_out_lines)
 count = text.count(bulk_out_marker)
 if count != 1:
-    raise SystemExit("Could not uniquely locate Bulk-OUT status/length check: " + str(count))
+    raise SystemExit("Could not uniquely locate Bulk-OUT callback using Linux v7.2 layout: " + str(count))
 text = text.replace(bulk_out_marker, bulk_out_replacement, 1)
 
 source.write_text(text)
 print("Applied RG353PS SCSI and bulk-OUT diagnostics")
+PYCODE
 PYCODE
 PYCODE
 
