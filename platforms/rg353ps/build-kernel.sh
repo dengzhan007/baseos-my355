@@ -695,10 +695,10 @@ if end_context_marker not in text:
     )
     text = text.replace(old_end, new_end, 1)
 
-# The controller may report an old XferNotReady(DATA) after a new SETUP has
-# already started and EP0 is still waiting for its transfer-complete event.
-# In that state, do not mistake the stale direction for a live data-phase
-# direction error and stall/restart the control endpoint.
+# A stale XferNotReady(DATA) may arrive after a newer zero-length SETUP.
+# If next_event is not NRDY_DATA, the current request has no data phase expected.
+# Avoid ENDTRANSFER/stall recovery on that out-of-phase event; keep normal
+# direction-mismatch recovery for a request that really expects DATA.
 guard_marker = "RG353PS ignoring stale EP0 DATA-not-ready"
 if guard_marker not in text:
     fn_start = text.find("static void dwc3_ep0_xfernotready(")
