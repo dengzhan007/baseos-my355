@@ -738,10 +738,10 @@ if end < 0:
 bulk_out_replacement = (
     "\tdump_msg(common, \"bulk-out\", req->buf, req->actual);\n"
     "\tif (req->status || req->actual != bh->bulk_out_intended_length) {\n"
-    "\t\tpr_info(\"baseos-msdiag: BULK OUT mismatch op=0x%02x status=%d actual=%u intended=%u\\n\",\n"
+    "\t\tpr_info(\"baseos-msdiag: BULK OUT mismatch op=0x%02x status=%d actual=%u intended=%u\\\\n\",\n"
     "\t\t\tcommon->cmnd[0], req->status, req->actual,\n"
     "\t\t\tbh->bulk_out_intended_length);\n"
-    "\t\tDBG(common, \"%s --> %d, %u/%u\\n\", __func__,\n"
+    "\t\tDBG(common, \"%s --> %d, %u/%u\\\\n\", __func__,\n"
     "\t\t    req->status, req->actual, bh->bulk_out_intended_length);\n"
     "\t}\n"
 )
