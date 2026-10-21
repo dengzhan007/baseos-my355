@@ -725,30 +725,31 @@ if count != 1:
     raise SystemExit("Could not uniquely locate SCSI command completion point: " + str(count))
 text = text.replace(finish_marker, finish_replacement, 1)
 
-# Instrument abnormal USB bulk-OUT completions by replacing the callback's
-# diagnostic segment using stable statement boundaries, not whitespace.
+# Instrument abnormal USB bulk-OUT completions using stable callback boundaries.
 bulk_out_begin = '\tdump_msg(common, "bulk-out", req->buf, req->actual);'
 bulk_out_end = '\tif (req->status == -ECONNRESET)'
 begin_count = text.count(bulk_out_begin)
 end_count = text.count(bulk_out_end)
 if begin_count != 1 or end_count != 1:
-    raise SystemExit("Could not uniquely locate Bulk-OUT callback boundaries: begin=" + str(begin_count) + " end=" + str(end_count))
+    raise SystemExit("Could not uniquely locate Bulk-OUT callback: begin=" + str(begin_count) + " end=" + str(end_count))
 begin = text.index(bulk_out_begin)
 end = text.index(bulk_out_end, begin)
-bulk_out_replacement = '\tdump_msg(common, "bulk-out", req->buf, req->actual);\n' + \
-    '\tif (req->status || req->actual != bh->bulk_out_intended_length) {\n' + \
-    '\t\tpr_info("baseos-msdiag: BULK OUT mismatch op=0x%02x status=%d actual=%u intended=%u\\n",\n' + \
-    '\t\t\tcommon->cmnd[0], req->status, req->actual,\n' + \
-    '\t\t\tbh->bulk_out_intended_length);\n' + \
-    '\t\tDBG(common, "%s --> %d, %u/%u\\n", __func__,\n' + \
-    '\t\t    req->status, req->actual, bh->bulk_out_intended_length);\n' + \
+if end <= begin:
+    raise SystemExit("Bulk-OUT callback boundary order is invalid")
+bulk_out_replacement = (
+    '\tdump_msg(common, "bulk-out", req->buf, req->actual);\n'
+    '\tif (req->status || req->actual != bh->bulk_out_intended_length) {\n'
+    '\t\tpr_info("baseos-msdiag: BULK OUT mismatch op=0x%02x status=%d actual=%u intended=%u\\n",\n'
+    '\t\t\tcommon->cmnd[0], req->status, req->actual,\n'
+    '\t\t\tbh->bulk_out_intended_length);\n'
+    '\t\tDBG(common, "%s --> %d, %u/%u\\n", __func__,\n'
+    '\t\t    req->status, req->actual, bh->bulk_out_intended_length);\n'
     '\t}\n'
+)
 text = text[:begin] + bulk_out_replacement + text[end:]
 
 source.write_text(text)
-print("Applied RG353PS SCSI and bulk-OUT diagnostics")
-PYCODE
-PYCODE
+print("Applied RG353PS SCSI and Bulk-OUT diagnostics")
 PYCODE
 
       # cfg80211 is built into this kernel and can request the regdb before
