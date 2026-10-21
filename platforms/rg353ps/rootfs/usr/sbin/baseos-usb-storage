@@ -396,8 +396,9 @@ while [ "$i" -lt 3600 ]; do
     hb_scsi_max="$(printf '%s\n' "$hb_scsi_batch" | sed -n 's/^__BASEOS_MAX_SEQ=//p' | tail -n 1)"
     hb_scsi_new="$(printf '%s\n' "$hb_scsi_batch" | grep -v '^__BASEOS_MAX_SEQ=' || :)"
     if [ -n "$hb_scsi_new" ]; then
-      hb_scsi_log="$(printf '%s\n' "$hb_scsi_new" | tr '\n' ';')"
-      log "SCSI command diagnostics after seq=$LAST_SCSI_SEQ: $hb_scsi_log"
+      printf '%s\n' "$hb_scsi_new" | while IFS= read -r hb_scsi_line; do
+        [ -z "$hb_scsi_line" ] || log "SCSI command diagnostic: $hb_scsi_line"
+      done
     fi
     case "$hb_scsi_max" in
       ''|*[!0-9]*) ;;
