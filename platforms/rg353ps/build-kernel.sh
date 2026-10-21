@@ -729,13 +729,12 @@ text = text.replace(finish_marker, finish_replacement, 1)
 bulk_out_begin = "\tdump_msg(common, \"bulk-out\", req->buf, req->actual);"
 bulk_out_end = "\tif (req->status == -ECONNRESET)"
 begin_count = text.count(bulk_out_begin)
-end_count = text.count(bulk_out_end)
-if begin_count != 1 or end_count != 1:
-    raise SystemExit("Could not uniquely locate Bulk-OUT callback: begin=" + str(begin_count) + " end=" + str(end_count))
+if begin_count != 1:
+    raise SystemExit("Could not uniquely locate Bulk-OUT callback entry: " + str(begin_count))
 begin = text.index(bulk_out_begin)
-end = text.index(bulk_out_end, begin)
-if end <= begin:
-    raise SystemExit("Bulk-OUT callback boundary order is invalid")
+end = text.find(bulk_out_end, begin + len(bulk_out_begin))
+if end < 0:
+    raise SystemExit("Could not locate Bulk-OUT callback end after its entry")
 bulk_out_replacement = (
     "\tdump_msg(common, \"bulk-out\", req->buf, req->actual);\n"
     "\tif (req->status || req->actual != bh->bulk_out_intended_length) {\n"
