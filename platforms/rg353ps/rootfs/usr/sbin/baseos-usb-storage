@@ -217,7 +217,7 @@ snapshot() {
   if command -v dmesg >/dev/null 2>&1; then
     # Keep EP0 SETUP records separately: SCSI WRITE diagnostics can evict them
     # from a fixed dmesg tail before the failure snapshot is collected.
-    dmesg 2>/dev/null | grep -F 'RG353PS EP0 SETUP' | tail -n 16 | while IFS= read -r ep0_setup_line; do
+    dmesg 2>/dev/null | grep -F 'RG353PS EP0 SETUP' | tail -n 16 | sed 's/RG353PS EP0 SETUP/EP0 SETUP request/g' | while IFS= read -r ep0_setup_line; do
       [ -z "$ep0_setup_line" ] || log "EP0 SETUP history: $ep0_setup_line"
     done
     dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|dwc3|usb|phy|gadget|udc|ep0out|mass.storage|vbus|extcon|role.switch|rockchip-usb2phy|otg' | tail -n 100 >> "$DIAG_LOG" || :
@@ -432,7 +432,7 @@ while [ "$i" -lt 3600 ]; do
     # it again if that sequence changed since the previous heartbeat.
     hb_ep0_setups="$(dmesg 2>/dev/null | grep -F 'RG353PS EP0 SETUP' | tail -n 12)"
     if [ -n "$hb_ep0_setups" ] && [ "$hb_ep0_setups" != "$LAST_EP0_SETUPS" ]; then
-      printf '%s\n' "$hb_ep0_setups" | while IFS= read -r hb_ep0_setup_line; do
+      printf '%s\n' "$hb_ep0_setups" | sed 's/RG353PS EP0 SETUP/EP0 SETUP request/g' | while IFS= read -r hb_ep0_setup_line; do
         [ -z "$hb_ep0_setup_line" ] || log "recent EP0 SETUP: $hb_ep0_setup_line"
       done
       LAST_EP0_SETUPS="$hb_ep0_setups"
