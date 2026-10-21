@@ -12,7 +12,8 @@ DIAG_LOG=/run/rg353ps-usb-storage.log
 BOOT_LOG=/mnt/boot/rg353ps-usb-storage.log
 KERNEL_ERR_START_SEC="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
 LAST_KERNEL_ERRORS=
-LAST_SCSI_SEQ=0
+LAST_SCSI_START_SEQ=0
+LAST_SCSI_FINISH_SEQ=0
 CONFIGFS=/sys/kernel/config
 G="$CONFIGFS/usb_gadget/rockchip"
 UDC=
@@ -383,26 +384,51 @@ while [ "$i" -lt 3600 ]; do
     # Preserve new SCSI entries by their monotonically increasing command
     # sequence number. A fixed dmesg tail can miss the WRITE that stalled if
     # PHY polling produces enough lines afterward.
-    hb_scsi_batch="$(dmesg 2>/dev/null | grep -F 'baseos-msdiag:' | awk -v last="$LAST_SCSI_SEQ" '
-      {
-        if (match($0, /seq=[0-9]+/)) {
-          seq = substr($0, RSTART + 4, RLENGTH - 4) + 0
-          if (seq > max) max = seq
-          if (seq > last) print $0
+    # Track START and FINISH independently. A finish record uses the same
+    # sequence as its start, so one shared "seq > last" cursor would discard it.
+    hb_scsi_batch="$(dmesg 2>/dev/null | grep -F 'baseos-msdiag:' | awk \
+      -v last_start="$LAST_SCSI_START_SEQ" \
+      -v last_finish="$LAST_SCSI_FINISH_SEQ" '
+      /baseos-msdiag: SCSI start seq=/ {
+        if (match($0, /SCSI start seq=[0-9]+/)) {
+          item = substr($0, RSTART, RLENGTH)
+          sub(/^SCSI start seq=/, "", item)
+          seq = item + 0
+          if (seq > max_start) max_start = seq
+          if (seq > last_start) print $0
         }
+        next
       }
-      END { print "__BASEOS_MAX_SEQ=" (max + 0) }
+      /baseos-msdiag: SCSI finish seq=/ {
+        if (match($0, /SCSI finish seq=[0-9]+/)) {
+          item = substr($0, RSTART, RLENGTH)
+          sub(/^SCSI finish seq=/, "", item)
+          seq = item + 0
+          if (seq > max_finish) max_finish = seq
+          if (seq > last_finish) print $0
+        }
+        next
+      }
+      END {
+        print "__BASEOS_MAX_START_SEQ=" (max_start + 0)
+        print "__BASEOS_MAX_FINISH_SEQ=" (max_finish + 0)
+      }
     ')"
-    hb_scsi_max="$(printf '%s\n' "$hb_scsi_batch" | sed -n 's/^__BASEOS_MAX_SEQ=//p' | tail -n 1)"
-    hb_scsi_new="$(printf '%s\n' "$hb_scsi_batch" | grep -v '^__BASEOS_MAX_SEQ=' || :)"
+    hb_scsi_max_start="$(printf '%s\n' "$hb_scsi_batch" | sed -n 's/^__BASEOS_MAX_START_SEQ=//p' | tail -n 1)"
+    hb_scsi_max_finish="$(printf '%s\n' "$hb_scsi_batch" | sed -n 's/^__BASEOS_MAX_FINISH_SEQ=//p' | tail -n 1)"
+    hb_scsi_new="$(printf '%s\n' "$hb_scsi_batch" | grep -v '^__BASEOS_MAX_.*_SEQ=' || :)"
     if [ -n "$hb_scsi_new" ]; then
       printf '%s\n' "$hb_scsi_new" | while IFS= read -r hb_scsi_line; do
         [ -z "$hb_scsi_line" ] || log "SCSI command diagnostic: $hb_scsi_line"
       done
     fi
-    case "$hb_scsi_max" in
+    case "$hb_scsi_max_start" in
       ''|*[!0-9]*) ;;
-      *) [ "$hb_scsi_max" -le "$LAST_SCSI_SEQ" ] || LAST_SCSI_SEQ="$hb_scsi_max" ;;
+      *) [ "$hb_scsi_max_start" -le "$LAST_SCSI_START_SEQ" ] || LAST_SCSI_START_SEQ="$hb_scsi_max_start" ;;
+    esac
+    case "$hb_scsi_max_finish" in
+      ''|*[!0-9]*) ;;
+      *) [ "$hb_scsi_max_finish" -le "$LAST_SCSI_FINISH_SEQ" ] || LAST_SCSI_FINISH_SEQ="$hb_scsi_max_finish" ;;
     esac
     hb_errors="$(dmesg 2>/dev/null | awk -v start="$KERNEL_ERR_START_SEC" '{ if (match($0, /^\[[[:space:]]*[0-9.]+/)) { t=substr($0, RSTART, RLENGTH); sub(/^\[[[:space:]]*/, "", t); if ((t+0) >= (start+0)) print } }' | grep -Ei 'mmc.*(error|timeout|reset)|I/O error|Buffer I/O|dwc3.*(error|timeout|unexpected|failed|end transfer)|ep0.*(error|failed)|usb.*(error|reset)' | grep -v 'baseos-usb-storage:' | tail -n 5 | tr '\n' ';')"
     if [ -n "$hb_errors" ] && [ "$hb_errors" != "$LAST_KERNEL_ERRORS" ]; then
