@@ -12,6 +12,7 @@ DIAG_LOG=/run/rg353ps-usb-storage.log
 BOOT_LOG=/mnt/boot/rg353ps-usb-storage.log
 KERNEL_ERR_START_SEC="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
 LAST_KERNEL_ERRORS=
+LAST_SCSI_DIAGNOSTICS=
 CONFIGFS=/sys/kernel/config
 G="$CONFIGFS/usb_gadget/rockchip"
 UDC=
@@ -212,7 +213,7 @@ snapshot() {
   done
   dump_usb_status
   if command -v dmesg >/dev/null 2>&1; then
-    dmesg 2>/dev/null | grep -Ei 'dwc3|usb|phy|gadget|udc|ep0out|mass.storage|vbus|extcon|role.switch|rockchip-usb2phy|otg' | tail -n 100 >> "$DIAG_LOG" || :
+    dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|dwc3|usb|phy|gadget|udc|ep0out|mass.storage|vbus|extcon|role.switch|rockchip-usb2phy|otg' | tail -n 100 >> "$DIAG_LOG" || :
   fi
 }
 cleanup() {
@@ -379,6 +380,15 @@ while [ "$i" -lt 3600 ]; do
     log "transfer heartbeat elapsed=$i seconds udc_state=$hb_state speed=$hb_speed data_cable=$hb_cable"
     hb_disk="$(grep -E ' mmcblk0(p[0-9]+)? ' /proc/diskstats 2>/dev/null | tr '\n' ';')"
     [ -z "$hb_disk" ] || log "diskstats $hb_disk"
+    # Preserve the kernel's targeted mass-storage trace. The normal USB status
+    # filter does not match this prefix; without this explicit capture, SCSI
+    # WRITE/SYNCHRONIZE CACHE diagnostics can exist in dmesg but never reach
+    # the TF1 log. Log only when the recent trace window changes to limit noise.
+    hb_scsi="$(dmesg 2>/dev/null | grep -F 'baseos-msdiag:' | tail -n 16 | tr '\n' ';')"
+    if [ -n "$hb_scsi" ] && [ "$hb_scsi" != "$LAST_SCSI_DIAGNOSTICS" ]; then
+      log "SCSI command diagnostics (recent kernel tail): $hb_scsi"
+      LAST_SCSI_DIAGNOSTICS="$hb_scsi"
+    fi
     hb_errors="$(dmesg 2>/dev/null | awk -v start="$KERNEL_ERR_START_SEC" '{ if (match($0, /^\[[[:space:]]*[0-9.]+/)) { t=substr($0, RSTART, RLENGTH); sub(/^\[[[:space:]]*/, "", t); if ((t+0) >= (start+0)) print } }' | grep -Ei 'mmc.*(error|timeout|reset)|I/O error|Buffer I/O|dwc3.*(error|timeout|unexpected|failed|end transfer)|ep0.*(error|failed)|usb.*(error|reset)' | grep -v 'baseos-usb-storage:' | tail -n 5 | tr '\n' ';')"
     if [ -n "$hb_errors" ] && [ "$hb_errors" != "$LAST_KERNEL_ERRORS" ]; then
       log "kernel events since storage start: $hb_errors"
