@@ -460,7 +460,8 @@ while [ "$i" -lt 3600 ]; do
         sub(/^SCSI start seq=/, "", seq)
         if (!match($0, /^\[[[:space:]]*[0-9.]+/)) next
         started = substr($0, RSTART, RLENGTH)
-        gsub(/[\[\] ]/, "", started)
+        sub(/^\[[[:space:]]*/, "", started)
+        sub(/\]$/, "", started)
         starts[seq] = $0
         times[seq] = started + 0
         next
