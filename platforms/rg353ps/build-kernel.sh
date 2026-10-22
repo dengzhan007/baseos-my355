@@ -870,6 +870,86 @@ source.write_text(text)
 print("Applied RG353PS SCSI and Bulk-OUT diagnostics")
 PYCODE
 
+      # Trace the Bulk-only Command Status Wrapper (CSW) independently from
+      # SCSI command processing. A SCSI "finish" log is emitted before the CSW
+      # is queued, so it does not prove that the host received the completion.
+      python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
+text = source.read_text()
+
+# Record CSW queue attempts and usb_ep_queue() return values in start_transfer().
+start = text.index("static int start_transfer(")
+end = text.index("static bool start_in_transfer(", start)
+func = text[start:end]
+queue_marker = "baseos-msdiag: CSW queue result"
+if queue_marker not in func:
+    decl_old = "\tint\trc;\n\n\tif (ep == fsg->bulk_in)"
+    decl_new = (
+        "\tint\trc;\n"
+        "\tbool rg353ps_is_csw = false;\n"
+        "\tu32 rg353ps_csw_tag = 0;\n"
+        "\tu8 rg353ps_csw_status = 0;\n"
+        "\tu32 rg353ps_csw_residue = 0;\n\n"
+        "\tif (ep == fsg->bulk_in && req->length == US_BULK_CS_WRAP_LEN) {\n"
+        "\t\tstruct bulk_cs_wrap *rg353ps_csw = (void *)req->buf;\n"
+        "\t\tif (le32_to_cpu(rg353ps_csw->Signature) == US_BULK_CS_SIGN) {\n"
+        "\t\t\trg353ps_is_csw = true;\n"
+        "\t\t\trg353ps_csw_tag = le32_to_cpu(rg353ps_csw->Tag);\n"
+        "\t\t\trg353ps_csw_status = rg353ps_csw->Status;\n"
+        "\t\t\trg353ps_csw_residue = le32_to_cpu(rg353ps_csw->Residue);\n"
+        "\t\t\tpr_info(\"baseos-msdiag: CSW submit tag=%u status=%u residue=%u len=%u\\n\",\n"
+        "\t\t\t\trg353ps_csw_tag, rg353ps_csw_status,\n"
+        "\t\t\t\trg353ps_csw_residue, req->length);\n"
+        "\t\t}\n"
+        "\t}\n\n"
+        "\tif (ep == fsg->bulk_in)"
+    )
+    if func.count(decl_old) != 1:
+        raise SystemExit("Could not uniquely locate start_transfer() declarations")
+    func = func.replace(decl_old, decl_new, 1)
+
+    queue_old = "\trc = usb_ep_queue(ep, req, GFP_KERNEL);"
+    queue_new = (
+        queue_old + "\n"
+        "\tif (rg353ps_is_csw)\n"
+        "\t\tpr_info(\"baseos-msdiag: CSW queue result tag=%u rc=%d\\n\",\n"
+        "\t\t\trg353ps_csw_tag, rc);"
+    )
+    if func.count(queue_old) != 1:
+        raise SystemExit("Could not uniquely locate usb_ep_queue() in start_transfer()")
+    func = func.replace(queue_old, queue_new, 1)
+    text = text[:start] + func + text[end:]
+
+# Record whether the host-controller endpoint completed the actual CSW request.
+start = text.index("static void bulk_in_complete(")
+end = text.index("static void bulk_out_complete(", start)
+func = text[start:end]
+complete_marker = "baseos-msdiag: CSW complete"
+if complete_marker not in func:
+    decl = "\tstruct fsg_buffhd\t*bh = req->context;\n"
+    diag = (
+        decl +
+        "\n"
+        "\tif (req->length == US_BULK_CS_WRAP_LEN) {\n"
+        "\t\tstruct bulk_cs_wrap *rg353ps_csw = (void *)req->buf;\n"
+        "\t\tif (le32_to_cpu(rg353ps_csw->Signature) == US_BULK_CS_SIGN)\n"
+        "\t\t\tpr_info(\"baseos-msdiag: CSW complete tag=%u status=%u residue=%u req_status=%d actual=%u len=%u\\n\",\n"
+        "\t\t\t\tle32_to_cpu(rg353ps_csw->Tag), rg353ps_csw->Status,\n"
+        "\t\t\t\tle32_to_cpu(rg353ps_csw->Residue), req->status,\n"
+        "\t\t\t\treq->actual, req->length);\n"
+        "\t}\n"
+    )
+    if func.count(decl) != 1:
+        raise SystemExit("Could not uniquely locate bulk_in_complete() callback context")
+    func = func.replace(decl, diag, 1)
+    text = text[:start] + func + text[end:]
+
+source.write_text(text)
+print("Applied RG353PS CSW queue/completion diagnostics")
+PYCODE
+
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
