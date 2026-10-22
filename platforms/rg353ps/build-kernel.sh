@@ -899,7 +899,7 @@ if queue_marker not in func:
         "\t\t\trg353ps_csw_tag = le32_to_cpu(rg353ps_csw->Tag);\n"
         "\t\t\trg353ps_csw_status = rg353ps_csw->Status;\n"
         "\t\t\trg353ps_csw_residue = le32_to_cpu(rg353ps_csw->Residue);\n"
-        "\t\t\tpr_info(\"baseos-msdiag: CSW submit tag=%u status=%u residue=%u len=%u\\n\",\n"
+        "\t\t\tpr_info(\"baseos-msdiag: CSW submit tag=%u status=%u residue=%u len=%u\\\\n\",\n"
         "\t\t\t\trg353ps_csw_tag, rg353ps_csw_status,\n"
         "\t\t\t\trg353ps_csw_residue, req->length);\n"
         "\t\t}\n"
@@ -914,7 +914,7 @@ if queue_marker not in func:
     queue_new = (
         queue_old + "\n"
         "\tif (rg353ps_is_csw)\n"
-        "\t\tpr_info(\"baseos-msdiag: CSW queue result tag=%u rc=%d\\n\",\n"
+        "\t\tpr_info(\"baseos-msdiag: CSW queue result tag=%u rc=%d\\\\n\",\n"
         "\t\t\trg353ps_csw_tag, rc);"
     )
     if func.count(queue_old) != 1:
@@ -935,7 +935,7 @@ if complete_marker not in func:
         "\tif (req->length == US_BULK_CS_WRAP_LEN) {\n"
         "\t\tstruct bulk_cs_wrap *rg353ps_csw = (void *)req->buf;\n"
         "\t\tif (le32_to_cpu(rg353ps_csw->Signature) == US_BULK_CS_SIGN)\n"
-        "\t\t\tpr_info(\"baseos-msdiag: CSW complete tag=%u status=%u residue=%u req_status=%d actual=%u len=%u\\n\",\n"
+        "\t\t\tpr_info(\"baseos-msdiag: CSW complete tag=%u status=%u residue=%u req_status=%d actual=%u len=%u\\\\n\",\n"
         "\t\t\t\tle32_to_cpu(rg353ps_csw->Tag), rg353ps_csw->Status,\n"
         "\t\t\t\tle32_to_cpu(rg353ps_csw->Residue), req->status,\n"
         "\t\t\t\treq->actual, req->length);\n"
