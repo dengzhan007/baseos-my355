@@ -226,6 +226,30 @@ snapshot() {
     dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|dwc3|usb|phy|gadget|udc|ep0out|mass.storage|vbus|extcon|role.switch|rockchip-usb2phy|otg' | tail -n 100 >> "$DIAG_LOG" || :
   fi
 }
+diagnose_usb_state_change() {
+  changed_state="$1"
+  log "===== immediate USB controller snapshot: post-CONFIGURED state=$changed_state ====="
+  log "UDC current state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown) speed=$(cat "/sys/class/udc/$UDC/current_speed" 2>/dev/null || echo unknown) gadget_binding=$(cat "$G/UDC" 2>/dev/null || echo empty)"
+  # State changes can precede a full disconnect by tens of seconds. Capture
+  # endpoint queues and controller IRQs now; periodic heartbeat may miss it.
+  for ep_dir in /sys/kernel/debug/usb/"$UDC"/ep*; do
+    [ -d "$ep_dir" ] || continue
+    for attr_path in "$ep_dir"/*; do
+      [ -f "$attr_path" ] || continue
+      attr_name="$(basename "$attr_path")"
+      case "$attr_name" in
+        transfer_type|queued|state|enabled|flags|maxpacket|burst|interval|address|direction|resource_index|type|descriptor|streams)
+          read_usb_attr "$attr_path"
+          ;;
+      esac
+    done
+  done
+  irq_snapshot="$(grep -Ei 'dwc3|usb|mmc|sdhci|dw_mmc' /proc/interrupts 2>/dev/null | tr '\n' ';')"
+  [ -z "$irq_snapshot" ] || log "controller IRQ counters at UDC state transition: $irq_snapshot"
+  if command -v dmesg >/dev/null 2>&1; then
+    dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|RG353PS EP0 SETUP|RG353PS ignoring stale|dwc3|usb2phy|VBUS|extcon|BULK OUT mismatch|mass.storage' | tail -n 100 >> "$DIAG_LOG" || :
+  fi
+}
 cleanup() {
   trap - EXIT INT TERM HUP
   snapshot "cleanup-before-unbind"
@@ -584,6 +608,7 @@ while [ "$i" -lt 3600 ]; do
         if is_data_cable_connected; then
           if [ "$LAST_RESET_STATE" != "$state" ]; then
             log "UDC left configured (state=$state) but USB data cable remains detected; preserving gadget for re-enumeration"
+            diagnose_usb_state_change "$state"
             LAST_RESET_STATE="$state"
           fi
           detached=0
