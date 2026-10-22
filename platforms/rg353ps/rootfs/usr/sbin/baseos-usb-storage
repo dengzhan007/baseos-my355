@@ -15,6 +15,9 @@ LAST_KERNEL_ERRORS=
 LAST_SCSI_START_SEQ=0
 LAST_SCSI_FINISH_SEQ=0
 LAST_EP0_SETUPS=
+LAST_WRITE_SECTORS=
+NO_WRITE_PROGRESS_SECONDS=0
+LAST_STALL_DIAG_SECONDS=0
 CONFIGFS=/sys/kernel/config
 G="$CONFIGFS/usb_gadget/rockchip"
 UDC=
@@ -387,6 +390,8 @@ while [ "$i" -lt 3600 ]; do
     log "transfer heartbeat elapsed=$i seconds udc_state=$hb_state speed=$hb_speed data_cable=$hb_cable"
     hb_disk="$(grep -E ' mmcblk0(p[0-9]+)? ' /proc/diskstats 2>/dev/null | tr '\n' ';')"
     [ -z "$hb_disk" ] || log "diskstats $hb_disk"
+    hb_write_sectors="$(awk '$3 == "mmcblk0p3" {print $10; exit}' /proc/diskstats 2>/dev/null)"
+    hb_uptime="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
     # Preserve new SCSI entries by their monotonically increasing command
     # sequence number. A fixed dmesg tail can miss the WRITE that stalled if
     # PHY polling produces enough lines afterward.
@@ -445,6 +450,86 @@ while [ "$i" -lt 3600 ]; do
       ''|*[!0-9]*) ;;
       *) [ "$hb_scsi_max_finish" -le "$LAST_SCSI_FINISH_SEQ" ] || LAST_SCSI_FINISH_SEQ="$hb_scsi_max_finish" ;;
     esac
+
+    # Detect a stuck host-to-device WRITE, not an idle storage session. A
+    # pending SCSI WRITE with no mmcblk0p3 sector progress is the useful trigger.
+    hb_pending_scsi="$(dmesg 2>/dev/null | awk -v now="$hb_uptime" '
+      /baseos-msdiag: SCSI start seq=/ {
+        if (!match($0, /SCSI start seq=[0-9]+/)) next
+        seq = substr($0, RSTART, RLENGTH)
+        sub(/^SCSI start seq=/, "", seq)
+        if (!match($0, /^\[[[:space:]]*[0-9.]+/)) next
+        started = substr($0, RSTART, RLENGTH)
+        gsub(/[\[\] ]/, "", started)
+        starts[seq] = $0
+        times[seq] = started + 0
+        next
+      }
+      /baseos-msdiag: SCSI finish seq=/ {
+        if (match($0, /SCSI finish seq=[0-9]+/)) {
+          seq = substr($0, RSTART, RLENGTH)
+          sub(/^SCSI finish seq=/, "", seq)
+          finished[seq] = 1
+        }
+        next
+      }
+      END {
+        count = 0
+        oldest_age = 0
+        oldest = ""
+        for (seq in starts) {
+          if (seq in finished) continue
+          age = now - times[seq]
+          if (age < 20) continue
+          count++
+          if (age > oldest_age) {
+            oldest_age = age
+            oldest = starts[seq]
+          }
+        }
+        if (count)
+          printf "pending_count=%d oldest_age=%.1fs oldest=%s", count, oldest_age, oldest
+      }
+    ')"
+
+    if [ "$hb_state" = "configured" ] && [ "$hb_cable" = "yes" ] &&
+       [ -n "$hb_write_sectors" ] && [ -n "$hb_pending_scsi" ]; then
+      if [ -n "$LAST_WRITE_SECTORS" ] && [ "$hb_write_sectors" = "$LAST_WRITE_SECTORS" ]; then
+        NO_WRITE_PROGRESS_SECONDS=$((NO_WRITE_PROGRESS_SECONDS + 10))
+      else
+        NO_WRITE_PROGRESS_SECONDS=0
+        LAST_STALL_DIAG_SECONDS=0
+      fi
+    else
+      NO_WRITE_PROGRESS_SECONDS=0
+      LAST_STALL_DIAG_SECONDS=0
+    fi
+    [ -z "$hb_write_sectors" ] || LAST_WRITE_SECTORS="$hb_write_sectors"
+
+    if [ "$NO_WRITE_PROGRESS_SECONDS" -ge 30 ] &&
+       [ $((NO_WRITE_PROGRESS_SECONDS - LAST_STALL_DIAG_SECONDS)) -ge 30 ]; then
+      log "WRITE stall watchdog: no backing-partition sector progress for $NO_WRITE_PROGRESS_SECONDS s; sectors_written=$hb_write_sectors; $hb_pending_scsi"
+      # Endpoint state is normally quiet during the failure, so sample every
+      # exposed DWC3 debugfs endpoint attribute at the stall rather than only
+      # recording EP0. Missing attributes are harmless on kernel variants.
+      for ep_dir in /sys/kernel/debug/usb/"$UDC"/ep*; do
+        [ -d "$ep_dir" ] || continue
+        for attr_path in "$ep_dir"/*; do
+          [ -f "$attr_path" ] || continue
+          attr_name="$(basename "$attr_path")"
+          case "$attr_name" in
+            transfer_type|queued|state|enabled|flags|maxpacket|burst|interval|address|direction|resource_index|type|descriptor|streams)
+              read_usb_attr "$attr_path"
+              ;;
+          esac
+        done
+      done
+      hb_irqs="$(grep -Ei 'dwc3|usb|mmc|sdhci|dw_mmc' /proc/interrupts 2>/dev/null | tr '\n' ';')"
+      [ -z "$hb_irqs" ] || log "controller IRQ counters during WRITE stall: $hb_irqs"
+      hb_stall_events="$(dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|BULK OUT mismatch|dwc3.*(error|timeout|failed|reset|stall|xfernotready)|mmc.*(error|timeout|reset)|I/O error' | tail -n 30 | tr '\n' ';')"
+      [ -z "$hb_stall_events" ] || log "recent kernel/USB events during WRITE stall: $hb_stall_events"
+      LAST_STALL_DIAG_SECONDS="$NO_WRITE_PROGRESS_SECONDS"
+    fi
     hb_errors="$(dmesg 2>/dev/null | awk -v start="$KERNEL_ERR_START_SEC" '{ if (match($0, /^\[[[:space:]]*[0-9.]+/)) { t=substr($0, RSTART, RLENGTH); sub(/^\[[[:space:]]*/, "", t); if ((t+0) >= (start+0)) print } }' | grep -Ei 'mmc.*(error|timeout|reset)|I/O error|Buffer I/O|dwc3.*(error|timeout|unexpected|failed|end transfer)|ep0.*(error|failed)|usb.*(error|reset)' | grep -v 'baseos-usb-storage:' | tail -n 5 | tr '\n' ';')"
     if [ -n "$hb_errors" ] && [ "$hb_errors" != "$LAST_KERNEL_ERRORS" ]; then
       log "kernel events since storage start: $hb_errors"
