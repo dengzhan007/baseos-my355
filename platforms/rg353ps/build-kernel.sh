@@ -723,6 +723,50 @@ if guard_marker not in text:
     ]
     text = text[:switch_at] + "\n" + "\n".join(guard_lines) + text[switch_at:]
 
+# Guard a late EP0 IN completion that arrives after the state machine
+# has already returned to SETUP phase. USB SETUP packets are received on
+# endpoint 0 OUT; EP0 IN completion bytes must not be reinterpreted as a new
+# setup request from the shared controller TRB buffer.
+xfer_guard_marker = "RG353PS ignoring stale EP0 IN XferComplete during SETUP phase"
+if xfer_guard_marker not in text:
+    fn_start = text.find("static void dwc3_ep0_xfer_complete(")
+    if fn_start < 0:
+        raise SystemExit("Could not locate DWC3 EP0 XferComplete handler")
+    fn_brace = text.find("{", fn_start)
+    fn_end = text.find("\n}\n", fn_brace)
+    if fn_brace < 0 or fn_end < 0:
+        raise SystemExit("Could not locate DWC3 EP0 XferComplete function body")
+    fn = text[fn_start:fn_end + 3]
+    old_prefix = (
+        "\tdep->flags &= ~DWC3_EP_TRANSFER_STARTED;\n"
+        "\tdep->resource_index = 0;\n"
+        "\tdwc->setup_packet_pending = false;"
+    )
+    if fn.count(old_prefix) != 1:
+        raise SystemExit("Could not uniquely locate EP0 XferComplete state reset")
+    guard_lines = [
+        "\tif (dwc->ep0state == EP0_SETUP_PHASE &&",
+        "\t    event->endpoint_number != 0) {",
+        "\t\tstruct usb_ctrlrequest *stale = (void *)dwc->ep0_trb;",
+        "\t\tdev_warn_ratelimited(dwc->dev,",
+        "\t\t\t\"RG353PS ignoring stale EP0 IN XferComplete during SETUP phase: event_ep=%u event_status=%u setup=%02x.%02x value=%04x index=%04x len=%u next_event=%d setup_pending=%u\\n\",",
+        "\t\t\tevent->endpoint_number, event->status,",
+        "\t\t\tstale->bRequestType, stale->bRequest,",
+        "\t\t\tle16_to_cpu(stale->wValue), le16_to_cpu(stale->wIndex),",
+        "\t\t\tle16_to_cpu(stale->wLength), dwc->ep0_next_event,",
+        "\t\t\tdwc->setup_packet_pending);",
+        "\t\tdep->flags &= ~DWC3_EP_TRANSFER_STARTED;",
+        "\t\tdep->resource_index = 0;",
+        "\t\treturn;",
+        "\t}",
+        "",
+    ]
+    guard = "\n".join(guard_lines) + "\n" + old_prefix
+    fn = fn.replace(old_prefix, guard, 1)
+    text = text[:fn_start] + fn + text[fn_end + 3:]
+source.write_text(text)
+print("Applied RG353PS EP0 stale IN-completion guard")
+
 source.write_text(text)
 print("Applied RG353PS DWC3 EP0 request diagnostics, stale-event guard, and timeout context")
 PYCODE
