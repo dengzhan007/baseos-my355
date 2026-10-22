@@ -749,7 +749,7 @@ if xfer_guard_marker not in text:
         "\t    event->endpoint_number != 0) {",
         "\t\tstruct usb_ctrlrequest *stale = (void *)dwc->ep0_trb;",
         "\t\tdev_warn_ratelimited(dwc->dev,",
-        "\t\t\t\"RG353PS ignoring stale EP0 IN XferComplete during SETUP phase: event_ep=%u event_status=%u setup=%02x.%02x value=%04x index=%04x len=%u next_event=%d setup_pending=%u\\n\",",
+        "\t\t\t\"RG353PS ignoring stale EP0 IN XferComplete during SETUP phase: event_ep=%u event_status=%u setup=%02x.%02x value=%04x index=%04x len=%u next_event=%d setup_pending=%u\",",
         "\t\t\tevent->endpoint_number, event->status,",
         "\t\t\tstale->bRequestType, stale->bRequest,",
         "\t\t\tle16_to_cpu(stale->wValue), le16_to_cpu(stale->wIndex),",
