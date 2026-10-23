@@ -950,6 +950,53 @@ source.write_text(text)
 print("Applied RG353PS CSW queue/completion diagnostics")
 PYCODE
 
+      # Distinguish a queued Bulk-OUT data request that never completes from a
+      # failed usb_ep_queue(). Log WRITE(10) request enqueue and completion.
+      python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
+text = source.read_text()
+
+start = text.index("static bool start_out_transfer(")
+end = text.index("static int sleep_thread(", start)
+func = text[start:end]
+queue_anchor = "\trc = start_transfer(common->fsg, common->fsg->bulk_out, bh->outreq);"
+queue_new = (
+    queue_anchor + "\n"
+    "\tif (common->cmnd[0] == 0x2a)\n"
+    "\t\tpr_info(\"baseos-msdiag: BULK OUT queue lba=%u intended=%u req_len=%u req=%p rc=%d\\\\n\",\n"
+    "\t\t\tget_unaligned_be32(&common->cmnd[2]),\n"
+    "\t\t\tbh->bulk_out_intended_length, bh->outreq->length,\n"
+    "\t\t\tbh->outreq, rc);"
+)
+if "baseos-msdiag: BULK OUT queue lba=" not in func:
+    if func.count(queue_anchor) != 1:
+        raise SystemExit("Could not uniquely locate Bulk-OUT queue in start_out_transfer()")
+    func = func.replace(queue_anchor, queue_new, 1)
+text = text[:start] + func + text[end:]
+
+start = text.index("static void bulk_out_complete(")
+end = text.index("static int _fsg_common_get_max_lun(", start)
+func = text[start:end]
+complete_anchor = '\tdump_msg(common, "bulk-out", req->buf, req->actual);'
+complete_new = (
+    complete_anchor + "\n"
+    "\tif (common->cmnd[0] == 0x2a)\n"
+    "\t\tpr_info(\"baseos-msdiag: BULK OUT complete req=%p status=%d actual=%u intended=%u\\\\n\",\n"
+    "\t\t\treq, req->status, req->actual,\n"
+    "\t\t\tbh->bulk_out_intended_length);"
+)
+if "baseos-msdiag: BULK OUT complete req=" not in func:
+    if func.count(complete_anchor) != 1:
+        raise SystemExit("Could not uniquely locate Bulk-OUT completion callback")
+    func = func.replace(complete_anchor, complete_new, 1)
+text = text[:start] + func + text[end:]
+
+source.write_text(text)
+print("Applied RG353PS WRITE(10) Bulk-OUT queue/completion diagnostics")
+PYCODE
+
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
