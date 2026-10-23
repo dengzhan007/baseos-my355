@@ -1184,7 +1184,7 @@ if helper_marker not in text:
     text = text.replace(func_marker, helper + func_marker, 1)
 
 func_start = text.index(func_marker)
-func_end = text.find("\\n}\\n", func_start)
+func_end = text.find("\n}\n", func_start)
 if func_end < 0:
     raise SystemExit("Could not locate end of start_out_transfer()")
 func = text[func_start:func_end + 3]
