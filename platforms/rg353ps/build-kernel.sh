@@ -1164,13 +1164,13 @@ text = source.read_text()
 helper_marker = "static bool rg353ps_has_other_receiving_request("
 func_marker = "static bool start_out_transfer(struct fsg_common *common, struct fsg_buffhd *bh)"
 helper = """static bool rg353ps_has_other_receiving_request(
-\t\tstruct fsg_common *common, struct fsg_buffhd *current)
+\t\tstruct fsg_common *common, struct fsg_buffhd *candidate)
 {
 \tstruct fsg_buffhd *scan = common->buffhds;
 \tunsigned int i;
 
 \tfor (i = 0; i < common->fsg_num_buffers; i++, scan = scan->next) {
-\t\tif (scan != current &&
+\t\tif (scan != candidate &&
 \t\t    smp_load_acquire(&scan->state) == BUF_STATE_RECEIVING)
 \t\t\treturn true;
 \t}
@@ -1218,14 +1218,14 @@ if "BULK OUT serialize wait" not in func:
         indent + "    rg353ps_has_other_receiving_request(common, bh)) {",
         indent + "\tint wait_rc;",
         "",
-        indent + "\tpr_info(\"baseos-msdiag: BULK OUT serialize wait req=%p\\n\",",
+        indent + "\tpr_info(\"baseos-msdiag: BULK OUT serialize wait req=%p" + chr(92) + "n\",",
         indent + "\t\tbh->outreq);",
         indent + "\twait_rc = wait_event_interruptible(common->io_wait,",
         indent + "\t\t!rg353ps_has_other_receiving_request(common, bh) ||",
         indent + "\t\t!fsg_is_set(common));",
         indent + "\tif (wait_rc || !fsg_is_set(common))",
         indent + "\t\treturn false;",
-        indent + "\tpr_info(\"baseos-msdiag: BULK OUT serialize released req=%p\\n\",",
+        indent + "\tpr_info(\"baseos-msdiag: BULK OUT serialize released req=%p" + chr(92) + "n\",",
         indent + "\t\tbh->outreq);",
         indent + "}",
         ""
