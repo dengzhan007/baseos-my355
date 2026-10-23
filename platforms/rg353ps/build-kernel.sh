@@ -979,7 +979,7 @@ text = text[:start] + func + text[end:]
 start = text.index("static void bulk_out_complete(")
 end = text.index("static int _fsg_common_get_max_lun(", start)
 func = text[start:end]
-complete_anchor = '\tdump_msg(common, "bulk-out", req->buf, req->actual);'
+complete_anchor = "\tdump_msg(common, \"bulk-out\", req->buf, req->actual);"
 complete_new = (
     complete_anchor + "\n"
     "\tif (common->cmnd[0] == 0x2a)\n"
