@@ -799,7 +799,7 @@ if event_marker not in func:
         "\t\t\t\"RG353PS DWC3 bulk-out event epnum=%u event=%u status=%u params=%08x flags=%08x resource_index=%u link_state=%u speed=%d connected=%u\\\\n\",\n"
         "\t\t\tepnum, event->endpoint_event, event->status,\n"
         "\t\t\tevent->parameters, dep->flags, dep->resource_index,\n"
-        "\t\t\tdwc->link_state, dwc->gadget.speed, dwc->connected);\n"
+        "\t\t\tdwc->link_state, dwc->gadget->speed, dwc->connected);\n"
         "\t}\n"
     )
     if func.count(queue_anchor) != 1:
@@ -823,13 +823,13 @@ def inject_device_event(signature, marker, log_line):
 inject_device_event(
     "static void dwc3_gadget_reset_interrupt(struct dwc3 *dwc)",
     "RG353PS DWC3 device RESET event",
-    "\tdev_info(dwc->dev, \"RG353PS DWC3 device RESET event speed=%d link_state=%u connected=%u setup_pending=%u\\\\n\", dwc->gadget.speed, dwc->link_state, dwc->connected, dwc->setup_packet_pending);",
+    "\tdev_info(dwc->dev, \"RG353PS DWC3 device RESET event speed=%d link_state=%u connected=%u setup_pending=%u\\\\n\", dwc->gadget->speed, dwc->link_state, dwc->connected, dwc->setup_packet_pending);",
 )
 
 inject_device_event(
     "static void dwc3_gadget_disconnect_interrupt(struct dwc3 *dwc)",
     "RG353PS DWC3 device DISCONNECT event",
-    "\tdev_info(dwc->dev, \"RG353PS DWC3 device DISCONNECT event speed=%d link_state=%u connected=%u setup_pending=%u\\\\n\", dwc->gadget.speed, dwc->link_state, dwc->connected, dwc->setup_packet_pending);",
+    "\tdev_info(dwc->dev, \"RG353PS DWC3 device DISCONNECT event speed=%d link_state=%u connected=%u setup_pending=%u\\\\n\", dwc->gadget->speed, dwc->link_state, dwc->connected, dwc->setup_packet_pending);",
 )
 
 source.write_text(text)
