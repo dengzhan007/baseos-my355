@@ -848,8 +848,8 @@ if "RG353PS EP2 DEPCMD begin" not in func:
 	     DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_ENDTRANSFER)) {
 		dev_info(dwc->dev,
 			"RG353PS EP2 DEPCMD begin cmd=%u raw=%08x params=%08x/%08x/%08x flags=%08x resource_index=%u trb_enq=%u trb_deq=%u link_state=%u speed=%d connected=%u DCTL=%08x DSTS=%08x\n",
-			DWC3_DEPCMD_CMD(cmd), cmd, params->param0, params->param1,
-			params->param2, dep->flags, dep->resource_index,
+			DWC3_DEPCMD_CMD(cmd), cmd, params ? params->param0 : 0, params ? params->param1 : 0,
+			params ? params->param2 : 0, dep->flags, dep->resource_index,
 			dep->trb_enqueue, dep->trb_dequeue, dwc->link_state,
 			dwc->gadget->speed, dwc->connected,
 			dwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS));
