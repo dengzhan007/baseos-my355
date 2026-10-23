@@ -841,7 +841,7 @@ if fn_start < 0 or fn_end < 0:
 func = text[fn_start:fn_end + 3]
 cmd_anchor = "\tdwc3_writel(dwc, DWC3_DEPCMD(epnum), cmd);"
 if "RG353PS EP2 DEPCMD begin" not in func:
-    cmd_diag = r'''
+    cmd_diag = r"""
 	if (epnum == 2 &&
 	    (DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_STARTTRANSFER ||
 	     DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_UPDATETRANSFER ||
@@ -854,13 +854,13 @@ if "RG353PS EP2 DEPCMD begin" not in func:
 			dwc->gadget->speed, dwc->connected,
 			dwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS));
 	}
-'''
+"""
     if func.count(cmd_anchor) != 1:
         raise SystemExit("Could not uniquely locate DWC3 DEPCMD write")
     func = func.replace(cmd_anchor, cmd_diag + "\n" + cmd_anchor, 1)
 done_marker = "\n\treturn ret;\n}"
 if "RG353PS EP2 DEPCMD done" not in func:
-    cmd_done = r'''
+    cmd_done = r"""
 	if (epnum == 2 &&
 	    (DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_STARTTRANSFER ||
 	     DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_UPDATETRANSFER ||
@@ -873,7 +873,7 @@ if "RG353PS EP2 DEPCMD done" not in func:
 			dwc->link_state, dwc->gadget->speed, dwc->connected,
 			dwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS));
 	}
-'''
+"""
     if func.count(done_marker) != 1:
         raise SystemExit("Could not uniquely locate DWC3 DEPCMD return")
     func = func.replace(done_marker, "\n" + cmd_done + done_marker, 1)
