@@ -832,25 +832,22 @@ inject_device_event(
     "\tdev_info(dwc->dev, \"RG353PS DWC3 device DISCONNECT event speed=%d link_state=%u connected=%u setup_pending=%u\\\\n\", dwc->gadget->speed, dwc->link_state, dwc->connected, dwc->setup_packet_pending);",
 )
 
-# Trace endpoint commands on physical endpoint 2 (USB EP1 OUT). This separates
-# "accepted by usb_ep_queue" from "STARTTRANSFER was programmed and accepted".
-cmd_trace = r"""
-# Trace START/UPDATE/END TRANSFER for physical endpoint 2 (Bulk-OUT).
+# Trace START/UPDATE/END TRANSFER commands for physical endpoint 2 (USB EP1 OUT).
+# usb_ep_queue returning 0 alone does not prove DWC3 actually started the transfer.
 fn_start = text.index("int dwc3_send_gadget_ep_cmd(")
 fn_end = text.find("\n}\n", fn_start)
 if fn_start < 0 or fn_end < 0:
     raise SystemExit("Could not locate dwc3_send_gadget_ep_cmd")
 func = text[fn_start:fn_end + 3]
-begin_marker = "RG353PS EP2 DEPCMD begin"
-if begin_marker not in func:
-    cmd_anchor = "\tdwc3_writel(dwc, DWC3_DEPCMD(epnum), cmd);"
+cmd_anchor = "\tdwc3_writel(dwc, DWC3_DEPCMD(epnum), cmd);"
+if "RG353PS EP2 DEPCMD begin" not in func:
     cmd_diag = r'''
 	if (epnum == 2 &&
 	    (DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_STARTTRANSFER ||
 	     DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_UPDATETRANSFER ||
 	     DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_ENDTRANSFER)) {
 		dev_info(dwc->dev,
-			"RG353PS EP2 DEPCMD begin cmd=%u raw=%08x params=%08x/%08x/%08x flags=%08x resource_index=%u trb_enq=%u trb_deq=%u link_state=%u speed=%d connected=%u DCTL=%08x DSTS=%08x\\n",
+			"RG353PS EP2 DEPCMD begin cmd=%u raw=%08x params=%08x/%08x/%08x flags=%08x resource_index=%u trb_enq=%u trb_deq=%u link_state=%u speed=%d connected=%u DCTL=%08x DSTS=%08x\n",
 			DWC3_DEPCMD_CMD(cmd), cmd, params->param0, params->param1,
 			params->param2, dep->flags, dep->resource_index,
 			dep->trb_enqueue, dep->trb_dequeue, dwc->link_state,
@@ -861,7 +858,7 @@ if begin_marker not in func:
     if func.count(cmd_anchor) != 1:
         raise SystemExit("Could not uniquely locate DWC3 DEPCMD write")
     func = func.replace(cmd_anchor, cmd_diag + "\n" + cmd_anchor, 1)
-end_marker = "\n\treturn ret;\n}"
+done_marker = "\n\treturn ret;\n}"
 if "RG353PS EP2 DEPCMD done" not in func:
     cmd_done = r'''
 	if (epnum == 2 &&
@@ -869,7 +866,7 @@ if "RG353PS EP2 DEPCMD done" not in func:
 	     DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_UPDATETRANSFER ||
 	     DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_ENDTRANSFER)) {
 		dev_info(dwc->dev,
-			"RG353PS EP2 DEPCMD done cmd=%u ret=%d cmd_status=%d raw=%08x flags=%08x resource_index=%u trb_enq=%u trb_deq=%u link_state=%u speed=%d connected=%u DCTL=%08x DSTS=%08x\\n",
+			"RG353PS EP2 DEPCMD done cmd=%u ret=%d cmd_status=%d raw=%08x flags=%08x resource_index=%u trb_enq=%u trb_deq=%u link_state=%u speed=%d connected=%u DCTL=%08x DSTS=%08x\n",
 			DWC3_DEPCMD_CMD(cmd), ret, cmd_status,
 			dwc3_readl(dwc, DWC3_DEPCMD(epnum)), dep->flags,
 			dep->resource_index, dep->trb_enqueue, dep->trb_dequeue,
@@ -877,14 +874,11 @@ if "RG353PS EP2 DEPCMD done" not in func:
 			dwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS));
 	}
 '''
-    if func.count(end_marker) != 1:
+    if func.count(done_marker) != 1:
         raise SystemExit("Could not uniquely locate DWC3 DEPCMD return")
-    func = func.replace(end_marker, "\n" + cmd_done + end_marker, 1)
+    func = func.replace(done_marker, "\n" + cmd_done + done_marker, 1)
 text = text[:fn_start] + func + text[fn_end + 3:]
-source.write_text(text)
 print("Applied RG353PS DWC3 endpoint-command diagnostics")
-""";
-
 source.write_text(text)
 print("Applied RG353PS DWC3 bulk-OUT event and device reset diagnostics")
 PYCODE
