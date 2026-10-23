@@ -1151,9 +1151,9 @@ print("Applied diagnostic experiment: FSG_BUFLEN=4096")
 PYCODE
 
       # Diagnostic experiment: serialize WRITE(10) Bulk-OUT receives.
-      # The latest RG353PS log showed two 4 KiB OUT requests left pending
-      # while the host stopped completing transfers. Keep at most one such
-      # request active to isolate the two-buffer DWC3 request pipeline.
+      # The latest RG353PS log showed multiple 4 KiB OUT requests left pending.
+      # Keep at most one WRITE(10) data request active to isolate the
+      # two-buffer DWC3 request pipeline.
       python3 - <<PYCODE
 from pathlib import Path
 
@@ -1180,7 +1180,9 @@ helper = """static bool rg353ps_has_other_receiving_request(
 func_marker = "static bool start_out_transfer(struct fsg_common *common, struct fsg_buffhd *bh)"
 if helper_marker not in text:
     if text.count(func_marker) != 1:
-        raise SystemExit("Could not uniquely locate start_out_transfer() for serialization experiment")
+        raise SystemExit(
+            "Could not uniquely locate start_out_transfer() for serialization experiment"
+        )
     text = text.replace(func_marker, helper + func_marker, 1)
 
 func_start = text.index(func_marker)
@@ -1189,11 +1191,12 @@ if func_end < 0:
     raise SystemExit("Could not locate end of start_out_transfer()")
 func = text[func_start:func_end + 3]
 
-old = """\tif (!fsg_is_set(common))
+if "BULK OUT serialize wait" not in func:
+    old = """\tif (!fsg_is_set(common))
 \t\treturn false;
 
 \tbh->state = BUF_STATE_RECEIVING;"""
-new = """\tif (!fsg_is_set(common))
+    new = """\tif (!fsg_is_set(common))
 \t\treturn false;
 
 \t/*
@@ -1204,33 +1207,31 @@ new = """\tif (!fsg_is_set(common))
 \t    rg353ps_has_other_receiving_request(common, bh)) {
 \t\tint wait_rc;
 
-\t\tpr_info("baseos-msdiag: BULK OUT serialize wait req=%p\\\\n",
+\t\tpr_info("baseos-msdiag: BULK OUT serialize wait req=%p\\n",
 \t\t\tbh->outreq);
 \t\twait_rc = wait_event_interruptible(common->io_wait,
 \t\t\t!rg353ps_has_other_receiving_request(common, bh) ||
 \t\t\t!fsg_is_set(common));
 \t\tif (wait_rc || !fsg_is_set(common))
 \t\t\treturn false;
-\t\tpr_info("baseos-msdiag: BULK OUT serialize released req=%p\\\\n",
+\t\tpr_info("baseos-msdiag: BULK OUT serialize released req=%p\\n",
 \t\t\tbh->outreq);
 \t}
 
 \tbh->state = BUF_STATE_RECEIVING;"""
-if (func.includes("BULK OUT serialize wait")) {
-  // leave an existing compatible implementation alone
-} else {
-  const count = func.split(old).length - 1;
-  if (count !== 1) {
-    text("Could not uniquely locate start_out_transfer() state transition; matches=" + count);
-    exit();
-  }
-  func = func.replace(old, new);
-  text = text.slice(0, func_start) + func + text.slice(func_end + 3);
-}
+    count = func.count(old)
+    if count != 1:
+        raise SystemExit(
+            "Could not uniquely locate start_out_transfer() state transition: "
+            f"matches={count}"
+        )
+    func = func.replace(old, new, 1)
+    text = text[:func_start] + func + text[func_end + 3:]
 
 source.write_text(text)
 print("Applied RG353PS serialized Bulk-OUT experiment")
 PYCODE
+
 
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
