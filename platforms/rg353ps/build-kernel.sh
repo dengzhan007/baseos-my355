@@ -779,7 +779,7 @@ import re
 source = Path("$SRC/drivers/usb/dwc3/gadget.c")
 text = source.read_text()
 
-# Log data endpoint events for logical endpoint 1 OUT, used by mass storage.
+# Log physical endpoint 2 (logical USB EP1 OUT), used by mass storage.
 fn_start = text.index("static void dwc3_endpoint_interrupt(")
 fn_end = text.find("\n}\n", fn_start)
 if fn_start < 0 or fn_end < 0:
@@ -790,7 +790,7 @@ if event_marker not in func:
     queue_anchor = "\tdep = dwc->eps[epnum];"
     event_diag = (
         queue_anchor + "\n"
-        "\tif (dep && dep->number == 1 && !dep->direction &&\n"
+        "\tif (dep && dep->number == 2 && !dep->direction &&\n"
         "\t    (event->endpoint_event == DWC3_DEPEVT_XFERCOMPLETE ||\n"
         "\t     event->endpoint_event == DWC3_DEPEVT_XFERINPROGRESS ||\n"
         "\t     event->endpoint_event == DWC3_DEPEVT_XFERNOTREADY ||\n"
