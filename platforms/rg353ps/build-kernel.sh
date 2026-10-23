@@ -1216,8 +1216,10 @@ if not source.is_file():
 text = source.read_text()
 marker = "BASEOS_RG353PS_DISABLE_DWC3_ENBLSLPM_HS_TEST"
 if marker not in text:
+    # The fcc00000.usb controller is declared in the included rk356x base DTSI
+    # with label usb_host0_xhci; this is the actual DWC3 controller on RK3566.
     addition = """
-&usbdrd_dwc3 {
+&usb_host0_xhci {
 	snps,dis_enblslpm_quirk;
 };
 
@@ -1227,7 +1229,9 @@ if marker not in text:
 source.write_text(text)
 if "snps,dis_enblslpm_quirk;" not in text or marker not in text:
     raise SystemExit("Failed to apply RG353PS High-Speed PHY quirk")
-print("Applied RG353PS High-Speed test: snps,dis_enblslpm_quirk")
+if "&usb_host0_xhci {" not in text:
+    raise SystemExit("RG353PS DWC3 node override is missing")
+print("Applied RG353PS High-Speed test: usb_host0_xhci snps,dis_enblslpm_quirk")
 PYCODE
 
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.
