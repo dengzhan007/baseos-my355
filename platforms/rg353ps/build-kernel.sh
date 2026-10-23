@@ -940,8 +940,42 @@ if "RG353PS EP2 DEPCMD done" not in func:
     func = func.replace(done_marker, "\n" + cmd_done + done_marker, 1)
 text = text[:fn_start] + func + text[fn_end + 3:]
 print("Applied RG353PS DWC3 endpoint-command diagnostics")
+
+# Log every DWC3 device-level event, including link-state, wakeup and suspend
+# transitions. The previous test shows WRITE(10) OUT requests remain HWO-owned
+# for ~20 seconds, but no EP2 transfer-completion event is logged before reset.
+device_event_marker = "RG353PS DWC3 device-event raw="
+if device_event_marker not in text:
+    event_pattern = re.compile(
+        r"static void dwc3_gadget_interrupt\([^)]*\)\s*\{", re.S
+    )
+    event_matches = list(event_pattern.finditer(text))
+    if len(event_matches) != 1:
+        raise SystemExit(
+            "Could not uniquely locate DWC3 device event handler: "
+            f"matches={len(event_matches)}"
+        )
+    event_match = event_matches[0]
+    event_lines = [
+        "\tstatic unsigned int rg353ps_device_event_seq;",
+        "\tdev_info(dwc->dev,",
+        "\t\t\"RG353PS DWC3 device-event raw=%08x seq=%u speed=%d link_state=%u connected=%u ep2_flags=%08x ep2_resource=%u ep2_enq=%u ep2_deq=%u GEVNTCOUNT=%08x GEVNTSIZ=%08x DCTL=%08x DSTS=%08x GUSB2PHYCFG=%08x" + chr(92) + "n\",",
+        "\t\t*(const u32 *)event, ++rg353ps_device_event_seq,",
+        "\t\tdwc->gadget->speed, dwc->link_state, dwc->connected,",
+        "\t\tdwc->eps[2] ? dwc->eps[2]->flags : 0,",
+        "\t\tdwc->eps[2] ? dwc->eps[2]->resource_index : 0,",
+        "\t\tdwc->eps[2] ? dwc->eps[2]->trb_enqueue : 0,",
+        "\t\tdwc->eps[2] ? dwc->eps[2]->trb_dequeue : 0,",
+        "\t\tdwc3_readl(dwc, DWC3_GEVNTCOUNT(0)),",
+        "\t\tdwc3_readl(dwc, DWC3_GEVNTSIZ(0)),",
+        "\t\tdwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS),",
+        "\t\tdwc3_readl(dwc, DWC3_GUSB2PHYCFG(0)));",
+    ]
+    event_diag = "\n".join(event_lines) + "\n"
+    text = text[:event_match.end()] + "\n" + event_diag + text[event_match.end():]
+
 source.write_text(text)
-print("Applied RG353PS DWC3 bulk-OUT event and device reset diagnostics")
+print("Applied RG353PS DWC3 bulk-OUT event, device-state and reset diagnostics")
 PYCODE
 
       # Add checked diagnostics to the existing USB mass-storage function. These
