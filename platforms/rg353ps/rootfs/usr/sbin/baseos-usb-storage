@@ -551,7 +551,7 @@ while [ "$i" -lt 3600 ]; do
       done
       hb_irqs="$(grep -Ei 'dwc3|usb|mmc|sdhci|dw_mmc' /proc/interrupts 2>/dev/null | tr '\n' ';')"
       [ -z "$hb_irqs" ] || log "controller IRQ counters during WRITE stall: $hb_irqs"
-      hb_stall_events="$(dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|BULK OUT mismatch|dwc3.*(error|timeout|failed|reset|stall|xfernotready)|mmc.*(error|timeout|reset)|I/O error' | tail -n 30 | tr '\n' ';')"
+      hb_stall_events="$(dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|BULK OUT mismatch|RG353PS DWC3 bulk-out event|dwc3.*(error|timeout|failed|reset|stall|xfernotready)|mmc.*(error|timeout|reset)|I/O error' | tail -n 30 | tr '\n' ';')"
       [ -z "$hb_stall_events" ] || log "recent kernel/USB events during WRITE stall: $hb_stall_events"
       LAST_STALL_DIAG_SECONDS="$NO_WRITE_PROGRESS_SECONDS"
     fi
