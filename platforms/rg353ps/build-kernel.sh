@@ -836,12 +836,12 @@ if reset_start < 0 or reset_end < 0:
 reset_func = text[reset_start:reset_end + 3]
 snapshot_marker = "RG353PS RESET EP2 snapshot"
 if snapshot_marker not in reset_func:
-    reset_log_prefix = '\tdev_info(dwc->dev, "RG353PS DWC3 device RESET event'
+    reset_log_prefix = "\tdev_info(dwc->dev, \"RG353PS DWC3 device RESET event"
     line_start = reset_func.find(reset_log_prefix)
     line_end = reset_func.find("\n", line_start)
     if line_start < 0 or line_end < 0:
         raise SystemExit("Could not locate DWC3 reset event log for EP2 snapshot")
-    snapshot = r'''
+    snapshot = r"""
 	{
 		struct dwc3_ep *out = dwc->eps[2];
 		if (out) {
@@ -883,7 +883,7 @@ if snapshot_marker not in reset_func:
 				dwc3_readl(dwc, DWC3_DEPCMDPAR2(2)));
 		}
 	}
-'''
+"""
     reset_func = reset_func[:line_end + 1] + snapshot + reset_func[line_end + 1:]
     text = text[:reset_start] + reset_func + text[reset_end + 3:]
 
