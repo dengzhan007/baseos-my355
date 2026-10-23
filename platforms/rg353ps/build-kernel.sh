@@ -771,6 +771,71 @@ source.write_text(text)
 print("Applied RG353PS DWC3 EP0 request diagnostics, stale-event guard, and timeout context")
 PYCODE
 
+      # Trace DWC3 bulk-OUT endpoint events and device reset/disconnect events.
+      python3 - <<PYCODE
+from pathlib import Path
+import re
+
+source = Path("$SRC/drivers/usb/dwc3/gadget.c")
+text = source.read_text()
+
+# Log data endpoint events for logical endpoint 1 OUT, used by mass storage.
+fn_start = text.index("static void dwc3_endpoint_interrupt(")
+fn_end = text.find("\n}\n", fn_start)
+if fn_start < 0 or fn_end < 0:
+    raise SystemExit("Could not locate DWC3 endpoint interrupt handler")
+func = text[fn_start:fn_end + 3]
+event_marker = "RG353PS DWC3 bulk-out event"
+if event_marker not in func:
+    queue_anchor = "\tdep = dwc->eps[epnum];"
+    event_diag = (
+        queue_anchor + "\n"
+        "\tif (dep && dep->number == 1 && !dep->direction &&\n"
+        "\t    (event->endpoint_event == DWC3_DEPEVT_XFERCOMPLETE ||\n"
+        "\t     event->endpoint_event == DWC3_DEPEVT_XFERINPROGRESS ||\n"
+        "\t     event->endpoint_event == DWC3_DEPEVT_XFERNOTREADY ||\n"
+        "\t     event->endpoint_event == DWC3_DEPEVT_EPCMDCMPLT)) {\n"
+        "\t\tdev_info_ratelimited(dwc->dev,\n"
+        "\t\t\t\"RG353PS DWC3 bulk-out event epnum=%u event=%u status=%u params=%08x flags=%08x resource_index=%u link_state=%u speed=%d connected=%u\\\\n\",\n"
+        "\t\t\tepnum, event->endpoint_event, event->status,\n"
+        "\t\t\tevent->parameters, dep->flags, dep->resource_index,\n"
+        "\t\t\tdwc->link_state, dwc->gadget.speed, dwc->connected);\n"
+        "\t}\n"
+    )
+    if func.count(queue_anchor) != 1:
+        raise SystemExit("Could not uniquely locate DWC3 endpoint lookup")
+    func = func.replace(queue_anchor, event_diag, 1)
+    text = text[:fn_start] + func + text[fn_end + 3:]
+
+def inject_device_event(signature, marker, log_line):
+    global text
+    pattern = re.compile(re.escape(signature) + r"\s*\{")
+    matches = list(pattern.finditer(text))
+    if len(matches) != 1:
+        raise SystemExit("Could not uniquely locate DWC3 event function: " + signature + " count=" + str(len(matches)))
+    match = matches[0]
+    body_end = text.find("\n}", match.end())
+    if body_end < 0:
+        raise SystemExit("Could not locate DWC3 event function end: " + signature)
+    if marker not in text[match.end():body_end]:
+        text = text[:match.end()] + "\n" + log_line + text[match.end():]
+
+inject_device_event(
+    "static void dwc3_gadget_reset_interrupt(struct dwc3 *dwc)",
+    "RG353PS DWC3 device RESET event",
+    "\tdev_info(dwc->dev, \"RG353PS DWC3 device RESET event speed=%d link_state=%u connected=%u setup_pending=%u\\\\n\", dwc->gadget.speed, dwc->link_state, dwc->connected, dwc->setup_packet_pending);",
+)
+
+inject_device_event(
+    "static void dwc3_gadget_disconnect_interrupt(struct dwc3 *dwc)",
+    "RG353PS DWC3 device DISCONNECT event",
+    "\tdev_info(dwc->dev, \"RG353PS DWC3 device DISCONNECT event speed=%d link_state=%u connected=%u setup_pending=%u\\\\n\", dwc->gadget.speed, dwc->link_state, dwc->connected, dwc->setup_packet_pending);",
+)
+
+source.write_text(text)
+print("Applied RG353PS DWC3 bulk-OUT event and device reset diagnostics")
+PYCODE
+
       # Add checked diagnostics to the existing USB mass-storage function. These
       # source edits use exact markers instead of a hand-maintained unified diff.
       python3 - <<PYCODE
