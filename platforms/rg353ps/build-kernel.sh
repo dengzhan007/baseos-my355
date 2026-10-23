@@ -1223,7 +1223,7 @@ if marker not in text:
 
 /* BASEOS_RG353PS_DISABLE_DWC3_ENBLSLPM_HS_TEST */
 """
-    text = text.rstrip() + "\\n" + addition
+    text = text.rstrip() + "\n" + addition
 source.write_text(text)
 if "snps,dis_enblslpm_quirk;" not in text or marker not in text:
     raise SystemExit("Failed to apply RG353PS High-Speed PHY quirk")
