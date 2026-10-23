@@ -1125,7 +1125,7 @@ text = source.read_text()
 # Kernel whitespace varies (tabs/spaces), so do not compare the whole
 # #define line literally. Match the value and preserve the surrounding text.
 pattern = re.compile(
-    r"(?m)^([ \\t]*#define[ \\t]+FSG_BUFLEN[ \\t]+\\(\\(u32\\)[ \\t]*)(16384|4096)([ \\t]*\\).*)$"
+    r"(?m)^([ \t]*#define[ \t]+FSG_BUFLEN[ \t]+\(\(u32\)[ \t]*)(16384|4096)([ \t]*\).*)$"
 )
 matches = list(pattern.finditer(text))
 if len(matches) != 1:
