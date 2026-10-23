@@ -826,6 +826,67 @@ inject_device_event(
     "\tdev_info(dwc->dev, \"RG353PS DWC3 device RESET event speed=%d link_state=%u connected=%u setup_pending=%u\\\\n\", dwc->gadget->speed, dwc->link_state, dwc->connected, dwc->setup_packet_pending);",
 )
 
+# Snapshot the live endpoint/request/TRB state at USB RESET, before the
+# reset handler tears down EP2. This distinguishes an unconsumed hardware TRB
+# from a queued-request/software-list problem.
+reset_start = text.index("static void dwc3_gadget_reset_interrupt(struct dwc3 *dwc)")
+reset_end = text.find("\n}\n", reset_start)
+if reset_start < 0 or reset_end < 0:
+    raise SystemExit("Could not locate DWC3 reset handler for EP2 snapshot")
+reset_func = text[reset_start:reset_end + 3]
+snapshot_marker = "RG353PS RESET EP2 snapshot"
+if snapshot_marker not in reset_func:
+    reset_log_prefix = '\tdev_info(dwc->dev, "RG353PS DWC3 device RESET event'
+    line_start = reset_func.find(reset_log_prefix)
+    line_end = reset_func.find("\n", line_start)
+    if line_start < 0 or line_end < 0:
+        raise SystemExit("Could not locate DWC3 reset event log for EP2 snapshot")
+    snapshot = r'''
+	{
+		struct dwc3_ep *out = dwc->eps[2];
+		if (out) {
+			struct dwc3_request *req;
+			struct dwc3_trb *trb = NULL;
+
+			req = list_first_entry_or_null(&out->started_list,
+						       struct dwc3_request, list);
+			if (req)
+				trb = req->trb;
+			else if (out->trb_pool)
+				trb = &out->trb_pool[out->trb_dequeue];
+
+			dev_info(dwc->dev,
+				"RG353PS RESET EP2 snapshot flags=%08x resource=%u trb_enq=%u trb_deq=%u started_empty=%u pending_empty=%u cancelled_empty=%u req=%p req_status=%d req_len=%u req_actual=%u req_remaining=%u req_num_trbs=%u req_trb_dma=%llx trb=%p trb_bpl=%08x trb_bph=%08x trb_size=%08x trb_ctrl=%08x ev_count=%u ev_lpos=%u ev_len=%u GEVNTCOUNT=%08x GEVNTSIZ=%08x DCTL=%08x DSTS=%08x GUSB2PHYCFG=%08x DEPCMD=%08x PAR0=%08x PAR1=%08x PAR2=%08x\n",
+				out->flags, out->resource_index, out->trb_enqueue,
+				out->trb_dequeue, list_empty(&out->started_list),
+				list_empty(&out->pending_list), list_empty(&out->cancelled_list),
+				req, req ? req->status : -1,
+				req ? req->request.length : 0,
+				req ? req->request.actual : 0,
+				req ? req->remaining : 0,
+				req ? req->num_trbs : 0,
+				req ? (unsigned long long)req->trb_dma : 0ULL,
+				trb, trb ? le32_to_cpu(trb->bpl) : 0,
+				trb ? le32_to_cpu(trb->bph) : 0,
+				trb ? le32_to_cpu(trb->size) : 0,
+				trb ? le32_to_cpu(trb->ctrl) : 0,
+				dwc->ev_buf ? dwc->ev_buf->count : 0,
+				dwc->ev_buf ? dwc->ev_buf->lpos : 0,
+				dwc->ev_buf ? dwc->ev_buf->length : 0,
+				dwc3_readl(dwc, DWC3_GEVNTCOUNT(0)),
+				dwc3_readl(dwc, DWC3_GEVNTSIZ(0)),
+				dwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS),
+				dwc3_readl(dwc, DWC3_GUSB2PHYCFG(0)),
+				dwc3_readl(dwc, DWC3_DEPCMD(2)),
+				dwc3_readl(dwc, DWC3_DEPCMDPAR0(2)),
+				dwc3_readl(dwc, DWC3_DEPCMDPAR1(2)),
+				dwc3_readl(dwc, DWC3_DEPCMDPAR2(2)));
+		}
+	}
+'''
+    reset_func = reset_func[:line_end + 1] + snapshot + reset_func[line_end + 1:]
+    text = text[:reset_start] + reset_func + text[reset_end + 3:]
+
 inject_device_event(
     "static void dwc3_gadget_disconnect_interrupt(struct dwc3 *dwc)",
     "RG353PS DWC3 device DISCONNECT event",
