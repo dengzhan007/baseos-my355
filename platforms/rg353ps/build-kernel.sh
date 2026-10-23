@@ -1156,11 +1156,13 @@ PYCODE
       # two-buffer DWC3 request pipeline.
       python3 - <<PYCODE
 from pathlib import Path
+import re
 
 source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
 text = source.read_text()
 
 helper_marker = "static bool rg353ps_has_other_receiving_request("
+func_marker = "static bool start_out_transfer(struct fsg_common *common, struct fsg_buffhd *bh)"
 helper = """static bool rg353ps_has_other_receiving_request(
 \t\tstruct fsg_common *common, struct fsg_buffhd *current)
 {
@@ -1177,7 +1179,6 @@ helper = """static bool rg353ps_has_other_receiving_request(
 }
 
 """
-func_marker = "static bool start_out_transfer(struct fsg_common *common, struct fsg_buffhd *bh)"
 if helper_marker not in text:
     if text.count(func_marker) != 1:
         raise SystemExit(
@@ -1192,44 +1193,50 @@ if func_end < 0:
 func = text[func_start:func_end + 3]
 
 if "BULK OUT serialize wait" not in func:
-    old = """\tif (!fsg_is_set(common))
-\t\treturn false;
-
-\tbh->state = BUF_STATE_RECEIVING;"""
-    new = """\tif (!fsg_is_set(common))
-\t\treturn false;
-
-\t/*
-\t * RG353PS diagnostic: serialize WRITE(10) receive requests. If the
-\t * failure changes, the two-request OUT pipeline is implicated.
-\t */
-\tif (common->cmnd[0] == 0x2a &&
-\t    rg353ps_has_other_receiving_request(common, bh)) {
-\t\tint wait_rc;
-
-\t\tpr_info("baseos-msdiag: BULK OUT serialize wait req=%p\\n",
-\t\t\tbh->outreq);
-\t\twait_rc = wait_event_interruptible(common->io_wait,
-\t\t\t!rg353ps_has_other_receiving_request(common, bh) ||
-\t\t\t!fsg_is_set(common));
-\t\tif (wait_rc || !fsg_is_set(common))
-\t\t\treturn false;
-\t\tpr_info("baseos-msdiag: BULK OUT serialize released req=%p\\n",
-\t\t\tbh->outreq);
-\t}
-
-\tbh->state = BUF_STATE_RECEIVING;"""
-    count = func.count(old)
-    if count != 1:
+    state_pattern = re.compile(
+        r"(?m)^([ \t]*)(?:bh->state[ \t]*=[ \t]*BUF_STATE_RECEIVING"
+        r"|smp_store_release\(&bh->state,[ \t]*BUF_STATE_RECEIVING\))[ \t]*;"
+    )
+    states = list(state_pattern.finditer(func))
+    if len(states) != 1:
+        excerpt = [
+            line for line in func.splitlines()
+            if "BUF_STATE_RECEIVING" in line or "fsg_is_set" in line
+        ]
         raise SystemExit(
-            "Could not uniquely locate start_out_transfer() state transition: "
-            f"matches={count}"
+            "Could not uniquely locate receiving-state assignment in "
+            f"start_out_transfer(): matches={len(states)}, candidates={excerpt}"
         )
-    func = func.replace(old, new, 1)
+
+    indent = states[0].group(1)
+    serialized_lines = [
+        indent + "/*",
+        indent + " * RG353PS diagnostic: serialize WRITE(10) receive requests.",
+        indent + " * A changed outcome implicates the multi-request OUT pipeline.",
+        indent + " */",
+        indent + "if (common->cmnd[0] == 0x2a &&",
+        indent + "    rg353ps_has_other_receiving_request(common, bh)) {",
+        indent + "\tint wait_rc;",
+        "",
+        indent + "\tpr_info(\"baseos-msdiag: BULK OUT serialize wait req=%p\\n\",",
+        indent + "\t\tbh->outreq);",
+        indent + "\twait_rc = wait_event_interruptible(common->io_wait,",
+        indent + "\t\t!rg353ps_has_other_receiving_request(common, bh) ||",
+        indent + "\t\t!fsg_is_set(common));",
+        indent + "\tif (wait_rc || !fsg_is_set(common))",
+        indent + "\t\treturn false;",
+        indent + "\tpr_info(\"baseos-msdiag: BULK OUT serialize released req=%p\\n\",",
+        indent + "\t\tbh->outreq);",
+        indent + "}",
+        ""
+    ]
+    insertion = "\n".join(serialized_lines)
+    state = states[0]
+    func = func[:state.start()] + insertion + func[state.start():]
     text = text[:func_start] + func + text[func_end + 3:]
 
 source.write_text(text)
-print("Applied RG353PS serialized Bulk-OUT experiment")
+print("Applied RG353PS serialized Bulk-OUT experiment using a function-local state anchor")
 PYCODE
 
 
