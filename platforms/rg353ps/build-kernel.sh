@@ -1204,6 +1204,32 @@ source.write_text(text)
 print("Applied RG353PS WRITE(10) Bulk-OUT queue/completion diagnostics")
 PYCODE
 
+      # High-Speed A/B test: disable DWC3 ENBLSLPM (the PHY suspend-signal
+      # path) only for the RG353PS gadget. Full-Speed tests passed reliably;
+      # now keep High-Speed and remove this one low-power variable.
+      python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
+if not source.is_file():
+    raise SystemExit("Could not locate RG353PS device tree for High-Speed PHY test")
+text = source.read_text()
+marker = "BASEOS_RG353PS_DISABLE_DWC3_ENBLSLPM_HS_TEST"
+if marker not in text:
+    addition = """
+&usbdrd_dwc3 {
+	snps,dis_enblslpm_quirk;
+};
+
+/* BASEOS_RG353PS_DISABLE_DWC3_ENBLSLPM_HS_TEST */
+"""
+    text = text.rstrip() + "\\n" + addition
+source.write_text(text)
+if "snps,dis_enblslpm_quirk;" not in text or marker not in text:
+    raise SystemExit("Failed to apply RG353PS High-Speed PHY quirk")
+print("Applied RG353PS High-Speed test: snps,dis_enblslpm_quirk")
+PYCODE
+
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.
       # Field tests showed that the 4 KiB buffer experiment did not stop the stall,
       # while serializing WRITE(10) requests made transfer speed substantially worse.
