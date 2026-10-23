@@ -1109,6 +1109,34 @@ source.write_text(text)
 print("Applied RG353PS WRITE(10) Bulk-OUT queue/completion diagnostics")
 PYCODE
 
+      # Diagnostic experiment: reduce each gadget mass-storage data request
+      # from 16 KiB to 4 KiB. The field logs showed queued 16 KiB Bulk-OUT
+      # requests going uncompleted until the host reset the USB device. This
+      # does not change the exported disk layout; it tests whether request size
+      # affects DWC3 endpoint progress. Restore 16 KiB after this experiment
+      # if it does not improve stability.
+      python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/drivers/usb/gadget/function/storage_common.h")
+text = source.read_text()
+old = "#define FSG_BUFLEN ((u32)16384)"
+new = "#define FSG_BUFLEN ((u32)4096)"
+old_count = text.count(old)
+new_count = text.count(new)
+if old_count == 1:
+    text = text.replace(old, new, 1)
+elif new_count == 1:
+    pass
+else:
+    raise SystemExit(
+        "Could not uniquely locate mass-storage buffer length: "
+        f"original={old_count}, experimental={new_count}"
+    )
+source.write_text(text)
+print("Applied diagnostic experiment: FSG_BUFLEN=4096")
+PYCODE
+
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
