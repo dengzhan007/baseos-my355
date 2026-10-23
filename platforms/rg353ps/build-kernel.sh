@@ -1117,22 +1117,35 @@ PYCODE
       # if it does not improve stability.
       python3 - <<PYCODE
 from pathlib import Path
+import re
 
 source = Path("$SRC/drivers/usb/gadget/function/storage_common.h")
 text = source.read_text()
-old = "#define FSG_BUFLEN ((u32)16384)"
-new = "#define FSG_BUFLEN ((u32)4096)"
-old_count = text.count(old)
-new_count = text.count(new)
-if old_count == 1:
-    text = text.replace(old, new, 1)
-elif new_count == 1:
+
+# Kernel whitespace varies (tabs/spaces), so do not compare the whole
+# #define line literally. Match the value and preserve the surrounding text.
+pattern = re.compile(
+    r"(?m)^([ \\t]*#define[ \\t]+FSG_BUFLEN[ \\t]+\\(\\(u32\\)[ \\t]*)(16384|4096)([ \\t]*\\).*)$"
+)
+matches = list(pattern.finditer(text))
+if len(matches) != 1:
+    excerpts = [
+        line for line in text.splitlines()
+        if "FSG_BUFLEN" in line
+    ]
+    raise SystemExit(
+        "Could not uniquely locate FSG_BUFLEN definition: "
+        f"matches={len(matches)}, candidates={excerpts}"
+    )
+
+match = matches[0]
+if match.group(2) == "16384":
+    text = text[:match.start()] + match.group(1) + "4096" + match.group(3) + text[match.end():]
+elif match.group(2) == "4096":
     pass
 else:
-    raise SystemExit(
-        "Could not uniquely locate mass-storage buffer length: "
-        f"original={old_count}, experimental={new_count}"
-    )
+    raise SystemExit(f"Unexpected FSG_BUFLEN value: {match.group(2)}")
+
 source.write_text(text)
 print("Applied diagnostic experiment: FSG_BUFLEN=4096")
 PYCODE
