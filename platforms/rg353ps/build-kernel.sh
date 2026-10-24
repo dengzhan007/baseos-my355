@@ -1670,20 +1670,18 @@ text = text.replace(
 start = text.index("static int finish_reply(struct fsg_common *common)")
 end = text.index("static void send_status(struct fsg_common *common)", start)
 func = text[start:end]
-switch_anchor = "\tint rc = 0;\n\n\tswitch (common->data_dir) {"
-switch_replacement = (
-    "\tint rc = 0;\n\n"
+switch_anchor = "\tswitch (common->data_dir) {"
+switch_diag = (
     "\tpr_info(\"baseos-msdiag: FSG finish_reply seq=%u tag=%u op=0x%02x dir=%d residue=%u usb_left=%u short_packet=%d sense=%u unit_attention=%u\\\\n\",\n"
     "\t\tcommon->rg353ps_storage_seq_current, common->tag, common->cmnd[0],\n"
     "\t\tcommon->data_dir, common->residue, common->usb_amount_left,\n"
     "\t\tcommon->short_packet_received,\n"
     "\t\tcommon->curlun ? common->curlun->sense_data : 0,\n"
     "\t\tcommon->curlun ? common->curlun->unit_attention_data : 0);\n\n"
-    "\tswitch (common->data_dir) {"
 )
 if func.count(switch_anchor) != 1:
     raise SystemExit("Could not uniquely locate finish_reply data direction switch")
-func = func.replace(switch_anchor, switch_replacement, 1)
+func = func.replace(switch_anchor, switch_diag + switch_anchor, 1)
 text = text[:start] + func + text[end:]
 
 source.write_text(text)
