@@ -1735,7 +1735,7 @@ PYCODE
 from pathlib import Path
 import re
 
-# FSG: capture the USB request's identity immediately before and after usb_ep_queue().
+# FSG: capture USB request identity immediately before and after usb_ep_queue().
 fsg_source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
 fsg_text = fsg_source.read_text()
 fsg_marker = "RG353PS FSG request-map v17 phase=prequeue"
