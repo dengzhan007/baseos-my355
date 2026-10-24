@@ -1293,7 +1293,7 @@ if "rg353ps_out_seq" not in buff:
         r"\tu32 rg353ps_out_seq;\n"
         r"\tu32 rg353ps_out_tag;\n"
         r"\tu32 rg353ps_out_lba;\n"
-        r"\tu8 rg353ps_out_op;"
+        r"\tu8 rg353ps_out_op;\n\tu8 rg353ps_out_is_cbw;"
     )
     buff2, field_count = field_pattern.subn(replacement, buff, count=1)
     if field_count != 1:
@@ -1308,12 +1308,16 @@ out_func = text[out_start:out_end]
 state_anchor = "\tbh->state = BUF_STATE_RECEIVING;"
 state_new = (
     state_anchor + "\n"
-    "\tbh->rg353ps_out_seq = common->rg353ps_storage_seq_current;\n"
-    "\tbh->rg353ps_out_tag = common->tag;\n"
-    "\tbh->rg353ps_out_op = common->cmnd[0];\n"
-    "\tbh->rg353ps_out_lba = common->cmnd[0] == 0x2a ? get_unaligned_be32(&common->cmnd[2]) : 0;\n"
-    "\tif (bh->rg353ps_out_op == 0x2a)\n"
-    "\t\tpr_info(\"baseos-msdiag: BULK OUT owner seq=%u tag=%u op=0x%02x lba=%u req=%p intended=%u req_len=%u\\\\n\",\n"
+    "\tbh->rg353ps_out_is_cbw = bh->bulk_out_intended_length == 31 && bh->outreq->length == 512;\n"
+    "\tbh->rg353ps_out_seq = bh->rg353ps_out_is_cbw ? 0 : common->rg353ps_storage_seq_current;\n"
+    "\tbh->rg353ps_out_tag = bh->rg353ps_out_is_cbw ? 0 : common->tag;\n"
+    "\tbh->rg353ps_out_op = bh->rg353ps_out_is_cbw ? 0 : common->cmnd[0];\n"
+    "\tbh->rg353ps_out_lba = !bh->rg353ps_out_is_cbw && common->cmnd[0] == 0x2a ? get_unaligned_be32(&common->cmnd[2]) : 0;\n"
+    "\tif (bh->rg353ps_out_is_cbw)\n"
+    "\t\tpr_info(\"baseos-msdiag: BULK OUT owner kind=CBW req=%p intended=%u req_len=%u\\\\n\",\n"
+    "\t\t\tbh->outreq, bh->bulk_out_intended_length, bh->outreq->length);\n"
+    "\telse if (bh->rg353ps_out_op == 0x2a)\n"
+    "\t\tpr_info(\"baseos-msdiag: BULK OUT owner kind=DATA seq=%u tag=%u op=0x%02x lba=%u req=%p intended=%u req_len=%u\\\\n\",\n"
     "\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,\n"
     "\t\t\tbh->rg353ps_out_lba, bh->outreq, bh->bulk_out_intended_length,\n"
     "\t\t\tbh->outreq->length);"
@@ -1336,10 +1340,14 @@ old_mismatch = (
     "\t\t\tbh->bulk_out_intended_length);"
 )
 new_mismatch = (
-    "pr_info(\"baseos-msdiag: BULK OUT mismatch seq=%u tag=%u op=0x%02x lba=%u req=%p status=%d actual=%u intended=%u\\\\n\",\n"
-    "\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,\n"
-    "\t\t\tbh->rg353ps_out_lba, req, req->status, req->actual,\n"
-    "\t\t\tbh->bulk_out_intended_length);"
+    "if (bh->rg353ps_out_is_cbw) {\n"
+    "\t\t\tpr_info(\"baseos-msdiag: BULK OUT mismatch kind=CBW req=%p status=%d actual=%u intended=%u req_len=%u\\\\n\",\n"
+    "\t\t\t\treq, req->status, req->actual, bh->bulk_out_intended_length, req->length);\n"
+    "\t\t} else {\n"
+    "\t\t\tpr_info(\"baseos-msdiag: BULK OUT mismatch kind=DATA seq=%u tag=%u op=0x%02x lba=%u req=%p status=%d actual=%u intended=%u\\\\n\",\n"
+    "\t\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,\n"
+    "\t\t\t\tbh->rg353ps_out_lba, req, req->status, req->actual, bh->bulk_out_intended_length);\n"
+    "\t\t}"
 )
 if old_mismatch in complete_func:
     complete_func = complete_func.replace(old_mismatch, new_mismatch, 1)
@@ -1353,11 +1361,15 @@ old_complete = (
     "\t\t\tbh->bulk_out_intended_length);"
 )
 new_complete = (
-    "if (bh->rg353ps_out_op == 0x2a)\n"
-    "\t\tpr_info(\"baseos-msdiag: BULK OUT complete seq=%u tag=%u op=0x%02x lba=%u req=%p status=%d actual=%u intended=%u\\\\n\",\n"
+    "if (bh->rg353ps_out_is_cbw) {\n"
+    "\t\tpr_info(\"baseos-msdiag: BULK OUT complete kind=CBW req=%p status=%d actual=%u intended=%u req_len=%u\\\\n\",\n"
+    "\t\t\treq, req->status, req->actual, bh->bulk_out_intended_length, req->length);\n"
+    "\t} else if (bh->rg353ps_out_op == 0x2a) {\n"
+    "\t\tpr_info(\"baseos-msdiag: BULK OUT complete kind=DATA seq=%u tag=%u op=0x%02x lba=%u req=%p status=%d actual=%u intended=%u\\\\n\",\n"
     "\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,\n"
     "\t\t\tbh->rg353ps_out_lba, req, req->status, req->actual,\n"
-    "\t\t\tbh->bulk_out_intended_length);"
+    "\t\t\tbh->bulk_out_intended_length);\n"
+    "}"
 )
 if old_complete in complete_func:
     complete_func = complete_func.replace(old_complete, new_complete, 1)
