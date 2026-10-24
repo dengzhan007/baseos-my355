@@ -1837,6 +1837,112 @@ dwc_source.write_text(dwc_text)
 print("Applied RG353PS v17 DWC3 USB-request/TRB mapping diagnostics")
 PYCODE
 
+      # High-Speed diagnostic v18: explicit OUT request reset, abort short DISCARD data and decode EP2 command completion.
+      python3 - <<PYCODE
+from pathlib import Path
+import re
+
+fsg_source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
+fsg_text = fsg_source.read_text()
+
+# The controller normally initializes status and actual at queue time. Reset
+# them at the function boundary too, while preserving the old values in logs.
+start = fsg_text.index("static bool start_out_transfer(struct fsg_common *common)")
+end = fsg_text.index("static int sleep_thread(", start)
+func = fsg_text[start:end]
+queue_anchor = "\trc = start_transfer(common->fsg, common->fsg->bulk_out, bh->outreq);"
+reset_marker = "baseos-msdiag: FSG request-reuse-reset v18"
+if reset_marker not in func:
+    reset_code = (
+        "\tif (bh->outreq->actual != 0 || bh->outreq->status != 0)\n"
+        "\t\tpr_info(\"baseos-msdiag: FSG request-reuse-reset v18 path=%u seq=%u tag=%u req=%p old_actual=%u old_status=%d len=%u intended=%u\\n\",\n"
+        "\t\t\tbh->rg353ps_out_path, bh->rg353ps_out_seq, bh->rg353ps_out_tag,\n"
+        "\t\t\tbh->outreq, bh->outreq->actual, bh->outreq->status,\n"
+        "\t\t\tbh->outreq->length, bh->bulk_out_intended_length);\n"
+        "\tbh->outreq->actual = 0;\n"
+        "\tbh->outreq->status = -EINPROGRESS;\n"
+    )
+    if func.count(queue_anchor) != 1:
+        raise SystemExit("Could not uniquely locate FSG start_out_transfer queue call")
+    func = func.replace(queue_anchor, reset_code + queue_anchor, 1)
+    fsg_text = fsg_text[:start] + func + fsg_text[end:]
+
+# A short successful OUT transfer in DISCARD means the data phase ended early.
+# Do not carry on and immediately queue a new 512-byte CBW request over the
+# tail of a command data phase. Use the normal BOT abort/recovery path.
+start = fsg_text.index("static int throw_away_data(struct fsg_common *common)")
+end = fsg_text.index("static int finish_reply(struct fsg_common *common)", start)
+func = fsg_text[start:end]
+short_marker = "baseos-msdiag: FSG DISCARD short-packet abort v18"
+if short_marker not in func:
+    complete_re = re.compile(
+        r"""(?s)(\t\tpr_info\("baseos-msdiag: FSG DISCARD wait-complete.*?common->usb_amount_left, common->residue\);\n)"""
+    )
+    matches = list(complete_re.finditer(func))
+    if len(matches) != 1:
+        raise SystemExit("Could not uniquely locate FSG DISCARD completion log for short-packet guard: " + str(len(matches)))
+    short_guard = r"""
+		if (bh->outreq->status == 0 &&
+		    bh->outreq->actual < bh->bulk_out_intended_length) {
+			pr_info("baseos-msdiag: FSG DISCARD short-packet abort v18 seq=%u tag=%u req=%p actual=%u intended=%u usb_left=%u residue=%u bh=%p state=%d next_fill=%p next_drain=%p\n",
+				common->rg353ps_storage_seq_current, common->tag,
+				bh->outreq, bh->outreq->actual,
+				bh->bulk_out_intended_length, common->usb_amount_left,
+				common->residue, bh, bh->state,
+				common->next_buffhd_to_fill,
+				common->next_buffhd_to_drain);
+			bh->state = BUF_STATE_EMPTY;
+			common->next_buffhd_to_drain = bh->next;
+			common->short_packet_received = 1;
+			raise_exception(common, FSG_STATE_ABORT_BULK_OUT);
+			return -EINTR;
+		}
+"""
+    insert_at = matches[0].end()
+    func = func[:insert_at] + short_guard + func[insert_at:]
+    fsg_text = fsg_text[:start] + func + fsg_text[end:]
+fsg_source.write_text(fsg_text)
+print("Applied v18 FSG request-reset and short-DISCARD BOT recovery handling")
+
+dwc_source = Path("$SRC/drivers/usb/dwc3/gadget.c")
+dwc_text = dwc_source.read_text()
+event_marker = "RG353PS EP2 EPCMDCMPLT v18"
+if event_marker not in dwc_text:
+    start = dwc_text.index("static void dwc3_gadget_endpoint_command_complete(")
+    end = dwc_text.find("\n}\n", start)
+    if end < 0:
+        raise SystemExit("Could not locate DWC3 endpoint command-completion handler")
+    func = dwc_text[start:end + 3]
+    anchor = "\tif (cmd != DWC3_DEPCMD_ENDTRANSFER)"
+    diag = r"""
+	if (dep->number == 2) {
+		struct dwc3_request *rg_req =
+			list_first_entry_or_null(&dep->started_list,
+						 struct dwc3_request, list);
+		struct dwc3_trb *rg_trb = rg_req ? rg_req->trb : NULL;
+		dev_info(dep->dwc->dev,
+			 "RG353PS EP2 EPCMDCMPLT v18 status=%u params=%08x cmd=%u flags=%08x resource=%u enq=%u deq=%u started_empty=%u pending_empty=%u dwc_req=%p usb_req=%p usb_status=%d usb_len=%u usb_actual=%u remaining=%u trb_dma=%llx trb_size=%08x trb_ctrl=%08x\n",
+			 event->status, event->parameters, cmd, dep->flags,
+			 dep->resource_index, dep->trb_enqueue, dep->trb_dequeue,
+			 list_empty(&dep->started_list), list_empty(&dep->pending_list),
+			 rg_req, rg_req ? &rg_req->request : NULL,
+			 rg_req ? rg_req->request.status : -1,
+			 rg_req ? rg_req->request.length : 0,
+			 rg_req ? rg_req->request.actual : 0,
+			 rg_req ? rg_req->remaining : 0,
+			 rg_req ? (unsigned long long)rg_req->trb_dma : 0ULL,
+			 rg_trb ? le32_to_cpu(rg_trb->size) : 0,
+			 rg_trb ? le32_to_cpu(rg_trb->ctrl) : 0);
+	}
+"""
+    if func.count(anchor) != 1:
+        raise SystemExit("Could not uniquely locate DWC3 ENDTRANSFER command check")
+    func = func.replace(anchor, diag + "\n" + anchor, 1)
+    dwc_text = dwc_text[:start] + func + dwc_text[end + 3:]
+dwc_source.write_text(dwc_text)
+print("Applied v18 DWC3 EP2 endpoint-command completion diagnostics")
+PYCODE
+
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
@@ -1937,7 +2043,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
-  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-reqmap-write-timing-v17",
+  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-short-discard-abort-epcmd-v18",
   "complete_sd_image": false,
   "hardware_tested": false
 }
