@@ -1447,7 +1447,248 @@ source.write_text(text)
 print("Applied per-request Bulk-OUT ownership and SCSI/CSW tag correlation diagnostics")
 PYCODE
 
-      # High-Speed diagnostic v15: the v12 power-change property targets GUSB3PIPECTL (SuperSpeed).
+      # v16: explicitly distinguish received WRITE data from post-UA throw-away data.
+      python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
+text = source.read_text()
+header = Path("$SRC/drivers/usb/gadget/function/storage_common.h")
+htext = header.read_text()
+
+# Request path IDs: 1=actual WRITE, 2=throw-away after failed command/Unit Attention,
+# 3=CBW. The path is copied into the buffer head before usb_ep_queue().
+if "rg353ps_out_path" not in htext:
+    marker = "\tu8 rg353ps_out_is_cbw;"
+    if htext.count(marker) != 1:
+        raise SystemExit("Could not uniquely add Bulk-OUT path field")
+    htext = htext.replace(marker, marker + "\n\tu8 rg353ps_out_path;", 1)
+    header.write_text(htext)
+
+def edit_func(start_sig, end_sig, transform, label):
+    global text
+    start = text.index(start_sig)
+    end = text.index(end_sig, start + len(start_sig))
+    func = text[start:end]
+    func2 = transform(func)
+    if func2 == func:
+        raise SystemExit("No changes applied to " + label)
+    text = text[:start] + func2 + text[end:]
+
+# Explicitly tag the three places which queue Bulk-OUT requests.
+def patch_do_write(func):
+    anchor = "\tamount_left_to_write = common->data_size_from_cmnd;\n\n\twhile (amount_left_to_write > 0) {"
+    replacement = (
+        "\tamount_left_to_write = common->data_size_from_cmnd;\n"
+        "\tpr_info(\"baseos-msdiag: FSG WRITE enter seq=%u tag=%u op=0x%02x lba=%llu bytes=%u residue=%u usb_left=%u unit_attention=%u sense=%u\\\\n\",\n"
+        "\t\tcommon->rg353ps_storage_seq_current, common->tag, common->cmnd[0],\n"
+        "\t\t(unsigned long long)lba, common->data_size_from_cmnd,\n"
+        "\t\tcommon->residue, common->usb_amount_left,\n"
+        "\t\tcurlun->unit_attention_data, curlun->sense_data);\n\n"
+        "\twhile (amount_left_to_write > 0) {"
+    )
+    if func.count(anchor) != 1:
+        raise SystemExit("Could not uniquely locate WRITE loop entry")
+    func = func.replace(anchor, replacement, 1)
+    queue_anchor = (
+        "\t\t\tset_bulk_out_req_length(common, bh, amount);\n"
+        "\t\t\tif (!start_out_transfer(common, bh))"
+    )
+    queue_replacement = (
+        "\t\t\tset_bulk_out_req_length(common, bh, amount);\n"
+        "\t\t\tbh->rg353ps_out_path = 1;\n"
+        "\t\t\tpr_info(\"baseos-msdiag: FSG WRITE queue seq=%u tag=%u lba=%llu amount=%u left_req=%u left_write=%u usb_left=%u residue=%u bh=%p req=%p state=%d\\\\n\",\n"
+        "\t\t\t\tcommon->rg353ps_storage_seq_current, common->tag,\n"
+        "\t\t\t\t(unsigned long long)lba, amount, amount_left_to_req,\n"
+        "\t\t\t\tamount_left_to_write, common->usb_amount_left, common->residue,\n"
+        "\t\t\t\tbh, bh->outreq, bh->state);\n"
+        "\t\t\tif (!start_out_transfer(common, bh))"
+    )
+    if func.count(queue_anchor) != 1:
+        raise SystemExit("Could not uniquely locate WRITE Bulk-OUT queue")
+    func = func.replace(queue_anchor, queue_replacement, 1)
+    wait_anchor = (
+        "\t\trc = sleep_thread(common, false, bh);\n"
+        "\t\tif (rc)\n"
+        "\t\t\treturn rc;"
+    )
+    wait_replacement = (
+        "\t\trc = sleep_thread(common, false, bh);\n"
+        "\t\tif (rc) {\n"
+        "\t\t\tpr_info(\"baseos-msdiag: FSG WRITE wait-interrupted seq=%u tag=%u rc=%d lba=%llu req=%p status=%d actual=%u intended=%u state=%d residue=%u\\\\n\",\n"
+        "\t\t\t\tcommon->rg353ps_storage_seq_current, common->tag, rc,\n"
+        "\t\t\t\t(unsigned long long)lba, bh->outreq, bh->outreq->status,\n"
+        "\t\t\t\tbh->outreq->actual, bh->bulk_out_intended_length,\n"
+        "\t\t\t\tbh->state, common->residue);\n"
+        "\t\t\treturn rc;\n"
+        "\t\t}\n"
+        "\t\tpr_info(\"baseos-msdiag: FSG WRITE wait-complete seq=%u tag=%u lba=%llu req=%p status=%d actual=%u intended=%u state=%d residue=%u\\\\n\",\n"
+        "\t\t\tcommon->rg353ps_storage_seq_current, common->tag,\n"
+        "\t\t\t(unsigned long long)lba, bh->outreq, bh->outreq->status,\n"
+        "\t\t\tbh->outreq->actual, bh->bulk_out_intended_length,\n"
+        "\t\t\tbh->state, common->residue);"
+    )
+    if func.count(wait_anchor) != 1:
+        raise SystemExit("Could not uniquely locate WRITE wait")
+    func = func.replace(wait_anchor, wait_replacement, 1)
+    write_anchor = "\t\tnwritten = kernel_write(curlun->filp, bh->buf, amount,"
+    write_replacement = (
+        "\t\tpr_info(\"baseos-msdiag: FSG WRITE backing-write seq=%u tag=%u lba=%llu bytes=%u offset=%llu\\\\n\",\n"
+        "\t\t\tcommon->rg353ps_storage_seq_current, common->tag,\n"
+        "\t\t\t(unsigned long long)lba, amount, (unsigned long long)file_offset);\n"
+        + write_anchor
+    )
+    if func.count(write_anchor) != 1:
+        raise SystemExit("Could not uniquely locate WRITE backing write")
+    return func.replace(write_anchor, write_replacement, 1)
+
+edit_func("static int do_write(struct fsg_common *common)",
+          "static int do_synchronize_cache(", patch_do_write, "do_write")
+
+def patch_throwaway(func):
+    loop_anchor = (
+        "\tfor (bh = common->next_buffhd_to_drain;\n"
+        "\t     bh->state != BUF_STATE_EMPTY || common->usb_amount_left > 0;\n"
+        "\t     bh = common->next_buffhd_to_drain) {"
+    )
+    loop_replacement = (
+        "\tpr_info(\"baseos-msdiag: FSG DISCARD enter seq=%u tag=%u op=0x%02x residue=%u usb_left=%u sense=%u unit_attention=%u\\\\n\",\n"
+        "\t\tcommon->rg353ps_storage_seq_current, common->tag, common->cmnd[0],\n"
+        "\t\tcommon->residue, common->usb_amount_left,\n"
+        "\t\tcommon->curlun ? common->curlun->sense_data : 0,\n"
+        "\t\tcommon->curlun ? common->curlun->unit_attention_data : 0);\n"
+        + loop_anchor
+    )
+    if func.count(loop_anchor) != 1:
+        raise SystemExit("Could not uniquely locate throw-away data loop")
+    func = func.replace(loop_anchor, loop_replacement, 1)
+    queue_anchor = (
+        "\t\t\tset_bulk_out_req_length(common, bh2, amount);\n"
+        "\t\t\tif (!start_out_transfer(common, bh2))"
+    )
+    queue_replacement = (
+        "\t\t\tset_bulk_out_req_length(common, bh2, amount);\n"
+        "\t\t\tbh2->rg353ps_out_path = 2;\n"
+        "\t\t\tpr_info(\"baseos-msdiag: FSG DISCARD queue seq=%u tag=%u op=0x%02x amount=%u usb_left=%u residue=%u bh=%p req=%p state=%d\\\\n\",\n"
+        "\t\t\t\tcommon->rg353ps_storage_seq_current, common->tag, common->cmnd[0],\n"
+        "\t\t\t\tamount, common->usb_amount_left, common->residue,\n"
+        "\t\t\t\tbh2, bh2->outreq, bh2->state);\n"
+        "\t\t\tif (!start_out_transfer(common, bh2))"
+    )
+    if func.count(queue_anchor) != 1:
+        raise SystemExit("Could not uniquely locate throw-away queue")
+    func = func.replace(queue_anchor, queue_replacement, 1)
+    wait_anchor = (
+        "\t\trc = sleep_thread(common, false, bh);\n"
+        "\t\tif (rc)\n"
+        "\t\t\treturn rc;"
+    )
+    wait_replacement = (
+        "\t\trc = sleep_thread(common, false, bh);\n"
+        "\t\tif (rc) {\n"
+        "\t\t\tpr_info(\"baseos-msdiag: FSG DISCARD wait-interrupted seq=%u tag=%u rc=%d req=%p path=%u status=%d actual=%u intended=%u state=%d usb_left=%u residue=%u\\\\n\",\n"
+        "\t\t\t\tcommon->rg353ps_storage_seq_current, common->tag, rc,\n"
+        "\t\t\t\tbh->outreq, bh->rg353ps_out_path, bh->outreq->status,\n"
+        "\t\t\t\tbh->outreq->actual, bh->bulk_out_intended_length,\n"
+        "\t\t\t\tbh->state, common->usb_amount_left, common->residue);\n"
+        "\t\t\treturn rc;\n"
+        "\t\t}\n"
+        "\t\tpr_info(\"baseos-msdiag: FSG DISCARD wait-complete seq=%u tag=%u req=%p path=%u status=%d actual=%u intended=%u state=%d usb_left=%u residue=%u\\\\n\",\n"
+        "\t\t\tcommon->rg353ps_storage_seq_current, common->tag,\n"
+        "\t\t\tbh->outreq, bh->rg353ps_out_path, bh->outreq->status,\n"
+        "\t\t\tbh->outreq->actual, bh->bulk_out_intended_length,\n"
+        "\t\t\tbh->state, common->usb_amount_left, common->residue);"
+    )
+    if func.count(wait_anchor) != 1:
+        raise SystemExit("Could not uniquely locate throw-away wait")
+    return func.replace(wait_anchor, wait_replacement, 1)
+
+edit_func("static int throw_away_data(struct fsg_common *common)",
+          "static int finish_reply(struct fsg_common *common)",
+          patch_throwaway, "throw_away_data")
+
+def patch_get_next(func):
+    anchor = "\tset_bulk_out_req_length(common, bh, US_BULK_CB_WRAP_LEN);\n\tif (!start_out_transfer(common, bh))"
+    replacement = "\tset_bulk_out_req_length(common, bh, US_BULK_CB_WRAP_LEN);\n\tbh->rg353ps_out_path = 3;\n\tif (!start_out_transfer(common, bh))"
+    if func.count(anchor) != 1:
+        raise SystemExit("Could not uniquely locate CBW submission")
+    return func.replace(anchor, replacement, 1)
+
+edit_func("static int get_next_command(struct fsg_common *common)",
+          "static int alloc_request(", patch_get_next, "get_next_command")
+
+# Label each queued/completed request with its origin. This prevents requests
+# drained after Unit Attention from being mistaken for a WRITE that reached do_write().
+start = text.index("static bool start_out_transfer(")
+end = text.index("static int sleep_thread(", start)
+func = text[start:end]
+needle = "\tbh->rg353ps_out_is_cbw = bh->bulk_out_intended_length == 31 && bh->outreq->length == 512;"
+if needle not in func:
+    raise SystemExit("Could not find CBW classification in start_out_transfer")
+func = func.replace(needle, needle + "\n\tif (bh->rg353ps_out_is_cbw)\n\t\tbh->rg353ps_out_path = 3;", 1)
+text = text[:start] + func + text[end:]
+
+replacements = [
+    ('BULK OUT owner kind=CBW req=%p', 'BULK OUT owner kind=CBW path=%u req=%p'),
+    ('BULK OUT mismatch kind=CBW req=%p', 'BULK OUT mismatch kind=CBW path=%u req=%p'),
+    ('BULK OUT complete kind=CBW req=%p', 'BULK OUT complete kind=CBW path=%u req=%p'),
+    ('BULK OUT owner kind=DATA seq=%u', 'BULK OUT owner kind=DATA path=%u seq=%u'),
+    ('BULK OUT mismatch kind=DATA seq=%u', 'BULK OUT mismatch kind=DATA path=%u seq=%u'),
+    ('BULK OUT complete kind=DATA seq=%u', 'BULK OUT complete kind=DATA path=%u seq=%u'),
+]
+for old, new in replacements:
+    if text.count(old) < 1:
+        raise SystemExit("Could not find expected Bulk-OUT log format: " + old)
+    text = text.replace(old, new)
+text = text.replace(
+    "\t\t\tbh->outreq, bh->bulk_out_intended_length, bh->outreq->length);",
+    "\t\t\tbh->rg353ps_out_path, bh->outreq, bh->bulk_out_intended_length, bh->outreq->length);", 1)
+# Both CBW mismatch and completion include the same argument suffix.
+cbw_args = "\t\t\t\treq, req->status, req->actual, bh->bulk_out_intended_length, req->length);"
+if text.count(cbw_args) != 2:
+    raise SystemExit("Expected two CBW callback argument lists, found " + str(text.count(cbw_args)))
+text = text.replace(cbw_args,
+    "\t\t\t\tbh->rg353ps_out_path, req, req->status, req->actual, bh->bulk_out_intended_length, req->length);")
+# Owner, mismatch, and completion DATA records all start with this metadata tuple.
+data_args = "\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,"
+if text.count(data_args) != 3:
+    raise SystemExit("Expected three DATA diagnostic argument lists, found " + str(text.count(data_args)))
+text = text.replace(data_args, "\t\t\tbh->rg353ps_out_path, bh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,")
+
+# Make clear that the existing SCSI "finish" record is the return from
+# do_scsi_command(), before finish_reply()/throw_away_data()/send_status().
+text = text.replace(
+    "baseos-msdiag: SCSI finish seq=%u tag=%u op=0x%02x",
+    "baseos-msdiag: SCSI finish stage=do_scsi_command-return seq=%u tag=%u op=0x%02x",
+    1
+)
+
+# Capture which data/status branch follows the SCSI handler return.
+start = text.index("static int finish_reply(struct fsg_common *common)")
+end = text.index("static void send_status(struct fsg_common *common)", start)
+func = text[start:end]
+switch_anchor = "\tint rc = 0;\n\n\tswitch (common->data_dir) {"
+switch_replacement = (
+    "\tint rc = 0;\n\n"
+    "\tpr_info(\"baseos-msdiag: FSG finish_reply seq=%u tag=%u op=0x%02x dir=%d residue=%u usb_left=%u short_packet=%d sense=%u unit_attention=%u\\\\n\",\n"
+    "\t\tcommon->rg353ps_storage_seq_current, common->tag, common->cmnd[0],\n"
+    "\t\tcommon->data_dir, common->residue, common->usb_amount_left,\n"
+    "\t\tcommon->short_packet_received,\n"
+    "\t\tcommon->curlun ? common->curlun->sense_data : 0,\n"
+    "\t\tcommon->curlun ? common->curlun->unit_attention_data : 0);\n\n"
+    "\tswitch (common->data_dir) {"
+)
+if func.count(switch_anchor) != 1:
+    raise SystemExit("Could not uniquely locate finish_reply data direction switch")
+func = func.replace(switch_anchor, switch_replacement, 1)
+text = text[:start] + func + text[end:]
+
+source.write_text(text)
+print("Applied RG353PS v16 FSG WRITE-vs-DISCARD path diagnostics")
+PYCODE
+
+      # High-Speed diagnostic v16: retain PHY/speed/buffer settings; trace SCSI data path.
+ the v12 power-change property targets GUSB3PIPECTL (SuperSpeed).
       # Keep only the tested USB2 PHY and GUCTL1 settings; improve EP2 event/request visibility.
       # Do not change speed, request queueing, FSG buffer, or noFUA behavior.
       python3 - <<PYCODE
@@ -1457,7 +1698,7 @@ source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
 if not source.is_file():
     raise SystemExit("Could not locate RG353PS device tree for High-Speed PHY test")
 text = source.read_text()
-marker = "BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V15"
+marker = "BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V16"
 if marker not in text:
     # The fcc00000.usb controller is declared in the included rk356x base DTSI
     # with label usb_host0_xhci; this is the actual DWC3 controller on RK3566.
@@ -1469,7 +1710,7 @@ if marker not in text:
 	snps,dis-tx-ipgap-linecheck-quirk;
 };
 
-/* BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V15 */
+/* BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V16 */
 """
     text = text.rstrip() + "\n" + addition
 source.write_text(text)
@@ -1479,7 +1720,7 @@ for prop in ("snps,dis_enblslpm_quirk;", "snps,dis-u2-freeclk-exists-quirk;",
         raise SystemExit("Failed to apply RG353PS High-Speed PHY quirk: " + prop)
 if marker not in text or "&usb_host0_xhci {" not in text:
     raise SystemExit("RG353PS DWC3 node override is missing")
-print("Applied RG353PS USB2 High-Speed v15 diagnostics: raw EP2 events plus active TRB state around endpoint commands")
+print("Applied RG353PS USB2 High-Speed v16 diagnostics: raw EP2 events, active TRB state and explicit WRITE-vs-DISCARD path tracing")
 PYCODE
 
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.
