@@ -1847,7 +1847,7 @@ fsg_text = fsg_source.read_text()
 
 # The controller normally initializes status and actual at queue time. Reset
 # them at the function boundary too, while preserving the old values in logs.
-start = fsg_text.index("static bool start_out_transfer(struct fsg_common *common)")
+start = fsg_text.index("static bool start_out_transfer(")
 end = fsg_text.index("static int sleep_thread(", start)
 func = fsg_text[start:end]
 queue_anchor = "\trc = start_transfer(common->fsg, common->fsg->bulk_out, bh->outreq);"
