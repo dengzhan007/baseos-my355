@@ -1490,14 +1490,14 @@ def patch_do_write(func):
     if func.count(anchor) != 1:
         raise SystemExit("Could not uniquely locate WRITE loop entry")
     func = func.replace(anchor, replacement, 1)
-    # v22 A/B test: cap each host-to-device data request at 4 KiB before
+    # v23 A/B test: cap each host-to-device data request at 512 bytes before
     # advancing USB offsets/counters. Keep the 16 KiB buffer allocation and
     # single-request pipeline, isolating the transfer-size variable.
     chunk_anchor = "\t\t\tamount = min(amount_left_to_req, FSG_BUFLEN);"
     chunk_replacement = (
         chunk_anchor + "\n"
-        "\t\t\t/* RG353PS v22: small OUT request-size diagnostic. */\n"
-        "\t\t\tamount = min(amount, 4096U);"
+        "\t\t\t/* RG353PS v23: single-packet OUT request-size diagnostic. */\n"
+        "\t\t\tamount = min(amount, 512U);"
     )
     if func.count(chunk_anchor) != 1:
         raise SystemExit("Could not uniquely locate WRITE chunk-size calculation")
@@ -2139,7 +2139,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
-  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v22-single-out-4k",
+  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v23-single-out-512",
   "complete_sd_image": false,
   "hardware_tested": false
 }
