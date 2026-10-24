@@ -448,10 +448,10 @@ while [ "$i" -lt 3600 ]; do
         }
         next
       }
-      /baseos-msdiag: SCSI finish seq=/ {
-        if (match($0, /SCSI finish seq=[0-9]+/)) {
+      /baseos-msdiag: SCSI finish / {
+        if (match($0, /SCSI finish .*seq=[0-9]+/)) {
           item = substr($0, RSTART, RLENGTH)
-          sub(/^SCSI finish seq=/, "", item)
+          sub(/^.*seq=/, "", item)
           seq = item + 0
           if (seq > max_finish) max_finish = seq
           if (seq > last_finish) print $0
