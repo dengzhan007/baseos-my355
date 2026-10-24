@@ -1691,7 +1691,7 @@ print("Applied RG353PS v16 FSG WRITE-vs-DISCARD path diagnostics")
 PYCODE
 
       # High-Speed diagnostic v16: retain PHY/speed/buffer settings; trace SCSI data path.
- the v12 power-change property targets GUSB3PIPECTL (SuperSpeed).
+      # The v12 power-change property targets GUSB3PIPECTL (SuperSpeed).
       # Keep only the tested USB2 PHY and GUCTL1 settings; improve EP2 event/request visibility.
       # Do not change speed, request queueing, FSG buffer, or noFUA behavior.
       python3 - <<PYCODE
