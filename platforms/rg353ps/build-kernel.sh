@@ -1729,6 +1729,114 @@ PYCODE
       # while serializing WRITE(10) requests made transfer speed substantially worse.
       # Leave the existing queue/completion and DWC3 diagnostics enabled.
 
+      # High-Speed diagnostic v17: read-only request-map and actual backing-write timing.
+      # No queue serialization, speed/PHY/buffer/noFUA changes; only trace ownership and latency.
+      python3 - <<PYCODE
+from pathlib import Path
+import re
+
+# FSG: capture the USB request's identity immediately before and after usb_ep_queue().
+fsg_source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
+fsg_text = fsg_source.read_text()
+fsg_marker = "RG353PS FSG request-map v17 phase=prequeue"
+if fsg_marker not in fsg_text:
+    start = fsg_text.index("static bool start_out_transfer(")
+    end = fsg_text.index("static int sleep_thread(", start)
+    func = fsg_text[start:end]
+    queue_anchor = "\trc = start_transfer(common->fsg, common->fsg->bulk_out, bh->outreq);"
+    queue_replacement = r"""
+	if (bh->rg353ps_out_op == 0x2a)
+		pr_info("baseos-msdiag: RG353PS FSG request-map v17 phase=prequeue path=%u seq=%u tag=%u op=0x%02x lba=%u bh=%p state=%d req=%p context=%p buf=%p dma=%llx len=%u actual=%u status=%d intended=%u\n",
+			bh->rg353ps_out_path, bh->rg353ps_out_seq, bh->rg353ps_out_tag,
+			bh->rg353ps_out_op, bh->rg353ps_out_lba, bh, bh->state,
+			bh->outreq, bh->outreq->context, bh->outreq->buf,
+			(unsigned long long)bh->outreq->dma, bh->outreq->length,
+			bh->outreq->actual, bh->outreq->status,
+			bh->bulk_out_intended_length);
+	rc = start_transfer(common->fsg, common->fsg->bulk_out, bh->outreq);
+	if (bh->rg353ps_out_op == 0x2a)
+		pr_info("baseos-msdiag: RG353PS FSG request-map v17 phase=postqueue path=%u seq=%u tag=%u op=0x%02x lba=%u bh=%p state=%d req=%p context=%p buf=%p dma=%llx len=%u actual=%u status=%d intended=%u queue_rc=%d\n",
+			bh->rg353ps_out_path, bh->rg353ps_out_seq, bh->rg353ps_out_tag,
+			bh->rg353ps_out_op, bh->rg353ps_out_lba, bh, bh->state,
+			bh->outreq, bh->outreq->context, bh->outreq->buf,
+			(unsigned long long)bh->outreq->dma, bh->outreq->length,
+			bh->outreq->actual, bh->outreq->status,
+			bh->bulk_out_intended_length, rc);
+"""
+    if func.count(queue_anchor) != 1:
+        raise SystemExit("Could not uniquely locate FSG Bulk-OUT queue for v17 request map")
+    func = func.replace(queue_anchor, queue_replacement, 1)
+    fsg_text = fsg_text[:start] + func + fsg_text[end:]
+
+# FSG backend: measure the real kernel_write call, but do not change its synchronization.
+fsg_marker_write = "RG353PS FSG WRITE backing-result v17"
+if fsg_marker_write not in fsg_text:
+    start = fsg_text.index("static int do_write(struct fsg_common *common)")
+    end = fsg_text.index("static int do_synchronize_cache(", start)
+    func = fsg_text[start:end]
+    brace = func.index("{") + 1
+    func = func[:brace] + "\n\tunsigned long rg353ps_write_started;\n" + func[brace:]
+    write_anchor = "\t\tnwritten = kernel_write(curlun->filp, bh->buf, amount,"
+    if func.count(write_anchor) != 1:
+        raise SystemExit("Could not uniquely locate kernel_write in do_write for v17 timing")
+    pos = func.index(write_anchor)
+    func = func[:pos] + "\t\trg353ps_write_started = jiffies;\n" + func[pos:]
+    pos = func.index(write_anchor)
+    semi = func.index(";", pos)
+    result_diag = r"""
+		pr_info("baseos-msdiag: RG353PS FSG WRITE backing-result v17 seq=%u tag=%u lba=%llu requested=%u result=%lld elapsed_ms=%u file_offset_now=%llu bh=%p bh_state=%d req=%p req_status=%d req_actual=%u intended=%u\n",
+			common->rg353ps_storage_seq_current, common->tag,
+			(unsigned long long)lba, amount, (long long)nwritten,
+			jiffies_to_msecs(jiffies - rg353ps_write_started),
+			(unsigned long long)file_offset, bh, bh->state, bh->outreq,
+			bh->outreq->status, bh->outreq->actual,
+			bh->bulk_out_intended_length);
+"""
+    func = func[:semi + 1] + "\n" + result_diag + func[semi + 1:]
+    fsg_text = fsg_text[:start] + func + fsg_text[end:]
+fsg_source.write_text(fsg_text)
+print("Applied RG353PS v17 FSG request-map and backing-write timing diagnostics")
+
+# DWC3: map the internal controller request to the gadget USB request and TRB.
+dwc_source = Path("$SRC/drivers/usb/dwc3/gadget.c")
+dwc_text = dwc_source.read_text()
+dwc_marker = "RG353PS EP2 REQMAP v17 phase=before-command"
+if dwc_marker not in dwc_text:
+    start = dwc_text.index("int dwc3_send_gadget_ep_cmd(")
+    end = dwc_text.find("\n}\n", start)
+    if end < 0:
+        raise SystemExit("Could not locate end of dwc3_send_gadget_ep_cmd for v17 request map")
+    func = dwc_text[start:end + 3]
+    needle = "\t\tstruct dwc3_trb *rg_trb = rg_req ? rg_req->trb : NULL;"
+    if func.count(needle) != 2:
+        raise SystemExit("Expected two EP2 request snapshots in DEPCMD routine, found " + str(func.count(needle)))
+    before_diag = r"""
+		dev_info(dwc->dev,
+			"RG353PS EP2 REQMAP v17 phase=before-command cmd=%u dwc_req=%p usb_req=%p context=%p buf=%p usb_dma=%llx trb=%p trb_dma=%llx req_status=%d req_len=%u req_actual=%u remaining=%u resource=%u enq=%u deq=%u trb_size=%08x trb_ctrl=%08x\n",
+			DWC3_DEPCMD_CMD(cmd), rg_req,
+			rg_req ? &rg_req->request : NULL,
+			rg_req ? rg_req->request.context : NULL,
+			rg_req ? rg_req->request.buf : NULL,
+			rg_req ? (unsigned long long)rg_req->request.dma : 0ULL,
+			rg_trb, rg_req ? (unsigned long long)rg_req->trb_dma : 0ULL,
+			rg_req ? rg_req->request.status : -1,
+			rg_req ? rg_req->request.length : 0,
+			rg_req ? rg_req->request.actual : 0,
+			rg_req ? rg_req->remaining : 0,
+			dep->resource_index, dep->trb_enqueue, dep->trb_dequeue,
+			rg_trb ? le32_to_cpu(rg_trb->size) : 0,
+			rg_trb ? le32_to_cpu(rg_trb->ctrl) : 0);
+"""
+    after_diag = before_diag.replace(
+        "phase=before-command", "phase=after-command"
+    )
+    func = func.replace(needle, needle + "\n" + before_diag, 1)
+    func = func.replace(needle, needle + "\n" + after_diag, 1)
+    dwc_text = dwc_text[:start] + func + dwc_text[end + 3:]
+dwc_source.write_text(dwc_text)
+print("Applied RG353PS v17 DWC3 USB-request/TRB mapping diagnostics")
+PYCODE
+
       # cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
@@ -1829,6 +1937,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
+  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-reqmap-write-timing-v17",
   "complete_sd_image": false,
   "hardware_tested": false
 }
