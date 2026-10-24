@@ -1216,12 +1216,15 @@ text = source.read_text()
 
 # Store the current logged SCSI sequence on fsg_common so each request can
 # copy it into the individual buffer head before queueing.
-common_marker = "\tunsigned int fsg_num_buffers;"
-common_new = "\tunsigned int fsg_num_buffers;\n\tu32 rg353ps_storage_seq_current;"
-common_count = text.count(common_marker)
+common_start = text.index("struct fsg_common {")
+common_end = text.index("\n};", common_start)
+common = text[common_start:common_end]
+common_marker = re.compile(r"(?m)^([ \\t]*u32[ \\t]+tag;[ \\t]*)$")
+common_new = r"\\1\\n\\tu32 rg353ps_storage_seq_current;"
+common_text, common_count = common_marker.subn(common_new, common, count=1)
 if common_count == 1:
-    text = text.replace(common_marker, common_new, 1)
-elif text.count(common_new) != 1:
+    text = text[:common_start] + common_text + text[common_end:]
+elif "rg353ps_storage_seq_current" not in common:
     raise SystemExit("Could not uniquely add current SCSI sequence to fsg_common: " + str(common_count))
 
 scsi_start = text.index("static int do_scsi_command(")
