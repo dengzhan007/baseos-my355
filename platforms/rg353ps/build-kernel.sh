@@ -1312,15 +1312,15 @@ complete_end = text.index("static int _fsg_common_get_max_lun(", complete_start)
 complete_func = text[complete_start:complete_end]
 
 old_mismatch = (
-    'pr_info("baseos-msdiag: BULK OUT mismatch op=0x%02x status=%d actual=%u intended=%u\\\\n",\n'
-    '\t\t\tcommon->cmnd[0], req->status, req->actual,\n'
-    '\t\t\tbh->bulk_out_intended_length);'
+    "pr_info("baseos-msdiag: BULK OUT mismatch op=0x%02x status=%d actual=%u intended=%u\\\\n",\n"
+    "\t\t\tcommon->cmnd[0], req->status, req->actual,\n"
+    "\t\t\tbh->bulk_out_intended_length);"
 )
 new_mismatch = (
-    'pr_info("baseos-msdiag: BULK OUT mismatch seq=%u tag=%u op=0x%02x lba=%u req=%p status=%d actual=%u intended=%u\\\\n",\n'
-    '\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,\n'
-    '\t\t\tbh->rg353ps_out_lba, req, req->status, req->actual,\n'
-    '\t\t\tbh->bulk_out_intended_length);'
+    "pr_info("baseos-msdiag: BULK OUT mismatch seq=%u tag=%u op=0x%02x lba=%u req=%p status=%d actual=%u intended=%u\\\\n",\n"
+    "\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,\n"
+    "\t\t\tbh->rg353ps_out_lba, req, req->status, req->actual,\n"
+    "\t\t\tbh->bulk_out_intended_length);"
 )
 if old_mismatch in complete_func:
     complete_func = complete_func.replace(old_mismatch, new_mismatch, 1)
@@ -1328,17 +1328,17 @@ elif "BULK OUT mismatch seq=%u tag=%u" not in complete_func:
     raise SystemExit("Could not replace shared-command Bulk-OUT mismatch log")
 
 old_complete = (
-    'if (common->cmnd[0] == 0x2a)\n'
-    '\t\tpr_info("baseos-msdiag: BULK OUT complete req=%p status=%d actual=%u intended=%u\\\\n",\n'
-    '\t\t\treq, req->status, req->actual,\n'
-    '\t\t\tbh->bulk_out_intended_length);'
+    "if (common->cmnd[0] == 0x2a)\n"
+    "\t\tpr_info("baseos-msdiag: BULK OUT complete req=%p status=%d actual=%u intended=%u\\\\n",\n"
+    "\t\t\treq, req->status, req->actual,\n"
+    "\t\t\tbh->bulk_out_intended_length);"
 )
 new_complete = (
-    'if (bh->rg353ps_out_op == 0x2a)\n'
-    '\t\tpr_info("baseos-msdiag: BULK OUT complete seq=%u tag=%u op=0x%02x lba=%u req=%p status=%d actual=%u intended=%u\\\\n",\n'
-    '\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,\n'
-    '\t\t\tbh->rg353ps_out_lba, req, req->status, req->actual,\n'
-    '\t\t\tbh->bulk_out_intended_length);'
+    "if (bh->rg353ps_out_op == 0x2a)\n"
+    "\t\tpr_info("baseos-msdiag: BULK OUT complete seq=%u tag=%u op=0x%02x lba=%u req=%p status=%d actual=%u intended=%u\\\\n",\n"
+    "\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,\n"
+    "\t\t\tbh->rg353ps_out_lba, req, req->status, req->actual,\n"
+    "\t\t\tbh->bulk_out_intended_length);"
 )
 if old_complete in complete_func:
     complete_func = complete_func.replace(old_complete, new_complete, 1)
