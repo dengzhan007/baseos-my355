@@ -1490,6 +1490,17 @@ def patch_do_write(func):
     if func.count(anchor) != 1:
         raise SystemExit("Could not uniquely locate WRITE loop entry")
     func = func.replace(anchor, replacement, 1)
+    # v21 A/B test: serialize WRITE data reception by allowing only one
+    # Bulk-OUT request to be outstanding. If this fixes stalls, the failure
+    # is likely tied to DWC3 handling of pipelined/multiple queued OUT TRBs.
+    pipeline_anchor = "\t\tif (bh->state == BUF_STATE_EMPTY && get_some_more) {"
+    pipeline_replacement = (
+        "\t\tif (bh->state == BUF_STATE_EMPTY && get_some_more &&\n"
+        "\t\t    common->next_buffhd_to_fill == common->next_buffhd_to_drain) {"
+    )
+    if func.count(pipeline_anchor) != 1:
+        raise SystemExit("Could not uniquely locate WRITE request-pipeline condition")
+    func = func.replace(pipeline_anchor, pipeline_replacement, 1)
     queue_anchor = (
         "\t\t\tset_bulk_out_req_length(common, bh, amount);\n"
         "\t\t\tif (!start_out_transfer(common, bh))"
@@ -2116,7 +2127,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
-  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v19",
+  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v21-single-out",
   "complete_sd_image": false,
   "hardware_tested": false
 }
