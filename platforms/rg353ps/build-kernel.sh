@@ -856,7 +856,7 @@ if snapshot_marker not in reset_func:
 				trb = &out->trb_pool[out->trb_dequeue];
 
 			dev_info(dwc->dev,
-				"RG353PS RESET EP2 snapshot flags=%08x resource=%u trb_enq=%u trb_deq=%u started_empty=%u pending_empty=%u cancelled_empty=%u req=%p req_status=%d req_len=%u req_actual=%u req_remaining=%u req_num_trbs=%u req_trb_dma=%llx trb=%p trb_bpl=%08x trb_bph=%08x trb_size=%08x trb_ctrl=%08x ev_count=%u ev_lpos=%u ev_len=%u GEVNTCOUNT=%08x GEVNTSIZ=%08x DCTL=%08x DSTS=%08x GUSB2PHYCFG=%08x DEPCMD=%08x PAR0=%08x PAR1=%08x PAR2=%08x\n",
+				"RG353PS RESET EP2 snapshot flags=%08x resource=%u trb_enq=%u trb_deq=%u started_empty=%u pending_empty=%u cancelled_empty=%u req=%p req_status=%d req_len=%u req_actual=%u req_remaining=%u req_num_trbs=%u req_trb_dma=%llx trb=%p trb_bpl=%08x trb_bph=%08x trb_size=%08x trb_ctrl=%08x ev_count=%u ev_lpos=%u ev_len=%u GEVNTCOUNT=%08x GEVNTSIZ=%08x DCTL=%08x DSTS=%08x GUSB2PHYCFG=%08x GUCTL1=%08x DEPCMD=%08x PAR0=%08x PAR1=%08x PAR2=%08x\n",
 				out->flags, out->resource_index, out->trb_enqueue,
 				out->trb_dequeue, list_empty(&out->started_list),
 				list_empty(&out->pending_list), list_empty(&out->cancelled_list),
@@ -877,6 +877,7 @@ if snapshot_marker not in reset_func:
 				dwc3_readl(dwc, DWC3_GEVNTSIZ(0)),
 				dwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS),
 				dwc3_readl(dwc, DWC3_GUSB2PHYCFG(0)),
+				dwc3_readl(dwc, DWC3_GUCTL1),
 				dwc3_readl(dwc, DWC3_DEPCMD(2)),
 				dwc3_readl(dwc, DWC3_DEPCMDPAR0(2)),
 				dwc3_readl(dwc, DWC3_DEPCMDPAR1(2)),
@@ -1204,9 +1205,9 @@ source.write_text(text)
 print("Applied RG353PS WRITE(10) Bulk-OUT queue/completion diagnostics")
 PYCODE
 
-      # High-Speed A/B test: clearing ENBLSLPM and U2_FREECLK_EXISTS did not
-      # stop the Bulk-OUT stall. Also keep SUSPHY disabled across role and
-      # power-state transitions, a compatibility quirk used on RK356x DWC3.
+      # High-Speed A/B test v11: v10's ENBLSLPM, U2_FREECLK_EXISTS, and SUSPHY
+      # settings did not stop the Bulk-OUT stall. Add only the TX IPGAP line-state
+      # check quirk for this run; keep request queueing and all other settings fixed.
       python3 - <<PYCODE
 from pathlib import Path
 
@@ -1214,7 +1215,7 @@ source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
 if not source.is_file():
     raise SystemExit("Could not locate RG353PS device tree for High-Speed PHY test")
 text = source.read_text()
-marker = "BASEOS_RG353PS_TEST_DISABLE_U2_SUSPHY"
+marker = "BASEOS_RG353PS_TEST_DISABLE_TX_IPGAP_LINECHECK"
 if marker not in text:
     # The fcc00000.usb controller is declared in the included rk356x base DTSI
     # with label usb_host0_xhci; this is the actual DWC3 controller on RK3566.
@@ -1223,19 +1224,20 @@ if marker not in text:
 	snps,dis_enblslpm_quirk;
 	snps,dis-u2-freeclk-exists-quirk;
 	snps,dis_u2_susphy_quirk;
+	snps,dis-tx-ipgap-linecheck-quirk;
 };
 
-/* BASEOS_RG353PS_TEST_DISABLE_U2_SUSPHY */
+/* BASEOS_RG353PS_TEST_DISABLE_TX_IPGAP_LINECHECK */
 """
     text = text.rstrip() + "\n" + addition
 source.write_text(text)
 for prop in ("snps,dis_enblslpm_quirk;", "snps,dis-u2-freeclk-exists-quirk;",
-             "snps,dis_u2_susphy_quirk;"):
+             "snps,dis_u2_susphy_quirk;", "snps,dis-tx-ipgap-linecheck-quirk;"):
     if prop not in text:
         raise SystemExit("Failed to apply RG353PS High-Speed PHY quirk: " + prop)
 if marker not in text or "&usb_host0_xhci {" not in text:
     raise SystemExit("RG353PS DWC3 node override is missing")
-print("Applied RG353PS High-Speed test: clear ENBLSLPM, U2_FREECLK_EXISTS, and SUSPHY")
+print("Applied RG353PS High-Speed v11 test: add TX IPGAP line-state-check quirk to v10 PHY settings")
 PYCODE
 
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.
