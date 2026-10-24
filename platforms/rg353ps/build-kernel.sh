@@ -1643,17 +1643,20 @@ for old, new in replacements:
 text = text.replace(
     "\t\t\tbh->outreq, bh->bulk_out_intended_length, bh->outreq->length);",
     "\t\t\tbh->rg353ps_out_path, bh->outreq, bh->bulk_out_intended_length, bh->outreq->length);", 1)
-# Both CBW mismatch and completion include the same argument suffix.
-cbw_args = "\t\t\t\treq, req->status, req->actual, bh->bulk_out_intended_length, req->length);"
-if text.count(cbw_args) != 2:
-    raise SystemExit("Expected two CBW callback argument lists, found " + str(text.count(cbw_args)))
-text = text.replace(cbw_args,
-    "\t\t\t\tbh->rg353ps_out_path, req, req->status, req->actual, bh->bulk_out_intended_length, req->length);")
-# Owner, mismatch, and completion DATA records all start with this metadata tuple.
-data_args = "\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,"
-if text.count(data_args) != 3:
-    raise SystemExit("Expected three DATA diagnostic argument lists, found " + str(text.count(data_args)))
-text = text.replace(data_args, "\t\t\tbh->rg353ps_out_path, bh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,")
+# Callback log lines have different indentation levels; match them independently.
+import re
+cbw_pattern = re.compile(r"(?m)^([ \t]*)req, req->status, req->actual, bh->bulk_out_intended_length, req->length\);$")
+text, cbw_count = cbw_pattern.subn(
+    r"\1bh->rg353ps_out_path, req, req->status, req->actual, bh->bulk_out_intended_length, req->length);",
+    text)
+if cbw_count != 2:
+    raise SystemExit("Expected two CBW callback argument lists, found " + str(cbw_count))
+data_pattern = re.compile(r"(?m)^([ \t]*)bh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,")
+text, data_count = data_pattern.subn(
+    r"\1bh->rg353ps_out_path, bh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,",
+    text)
+if data_count != 3:
+    raise SystemExit("Expected three DATA diagnostic argument lists, found " + str(data_count))
 
 # Make clear that the existing SCSI "finish" record is the return from
 # do_scsi_command(), before finish_reply()/throw_away_data()/send_status().
