@@ -1,0 +1,697 @@
+#!/bin/sh
+# Expose the active frontend/user-data partition over USB mass storage.
+# Never export the system root or BASEOS_BOOT partition.
+set -u
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+REQUEST=/run/baseos-usb-storage.request
+PAUSED=/run/baseos-frontend-paused
+ACTIVE=/run/baseos-usb-storage.active
+DIAG_LOG=/run/rg353ps-usb-storage.log
+BOOT_LOG=/mnt/boot/rg353ps-usb-storage.log
+KERNEL_ERR_START_SEC="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
+LAST_KERNEL_ERRORS=
+LAST_SCSI_START_SEQ=0
+LAST_SCSI_FINISH_SEQ=0
+LAST_EP0_SETUPS=
+LAST_WRITE_SECTORS=
+hb_write_sectors=
+NO_WRITE_PROGRESS_SECONDS=0
+LAST_STALL_DIAG_SECONDS=0
+CONFIGFS=/sys/kernel/config
+G="$CONFIGFS/usb_gadget/rockchip"
+UDC=
+OLD_UDC=
+HAD_ADB=0
+MOUNTPOINT=
+DEVICE=
+FSTYPE=
+BOUND=0
+CABLE_TRIGGERED=0
+CREATED_GADGET=0
+BOOT_MODE=0
+RESET_NOT_CONFIGURED_SECONDS=0
+RESET_RECOVERY_ATTEMPTED=0
+PROMPT_PID=
+: > "$DIAG_LOG"
+# BASEOS_BOOT_LIVE_LOG_V1: mirror logs to BOOT so forced power-off preserves progress.
+if [ -d /mnt/boot ] && grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
+  : > "$BOOT_LOG" 2>/dev/null || :
+  printf '%s baseos-usb-storage: session started; live BOOT logging enabled\n' "$(date '+%F %T' 2>/dev/null || echo uptime)" >> "$BOOT_LOG" 2>/dev/null || :
+  sync
+fi
+case "${1:-}" in
+  "") ;;
+  --boot) BOOT_MODE=1 ;;
+  *) log "unknown argument: $1"; exit 2 ;;
+esac
+
+log() {
+  line="$(date '+%F %T' 2>/dev/null || echo uptime) baseos-usb-storage: $*"
+  printf '%s\n' "$line" >> "$DIAG_LOG"
+  printf 'baseos-usb-storage: %s\n' "$*" > /dev/kmsg 2>/dev/null || :
+  if [ -d /mnt/boot ] && grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
+    printf '%s\n' "$line" >> "$BOOT_LOG" 2>/dev/null || :
+  fi
+}
+is_mounted() { grep -q " $1 " /proc/mounts; }
+read_usb_attr() {
+  p="$1"
+  [ -r "$p" ] || return 0
+  value="$(cat "$p" 2>/dev/null | tr '\n' ' ')"
+  log "USB sysfs: $p=$value"
+}
+is_data_cable_connected() {
+  # Prefer the UDC's supplier-PHY extcon entries when this kernel exposes them.
+  for cable in /sys/devices/platform/"$UDC"/supplier:platform:*usb2phy/extcon/*/cable.*; do
+    [ -r "$cable/name" ] && [ -r "$cable/state" ] || continue
+    probe_name="$(cat "$cable/name" 2>/dev/null)"
+    case "$probe_name" in
+      SDP|CDP)
+        [ "$(cat "$cable/state" 2>/dev/null)" = "1" ] && return 0
+        ;;
+    esac
+  done
+  # Some RK3566 kernels expose only the aggregate state through /sys/class/extcon.
+  # Match SDP/CDP as complete whitespace-delimited tokens, not a shell glob.
+  for extcon in /sys/class/extcon/*; do
+    [ -r "$extcon/name" ] && [ -r "$extcon/state" ] || continue
+    probe_name="$(cat "$extcon/name" 2>/dev/null)"
+    case "$probe_name" in *usb2phy*) ;; *) continue ;; esac
+    probe_state="$(cat "$extcon/state" 2>/dev/null)"
+    if printf '%s\n' "$probe_state" | grep -Eq '(^|[[:space:]])(SDP|CDP)=1([[:space:]]|$)'; then
+      return 0
+    fi
+  done
+  return 1
+}
+log_cable_probe_inputs() {
+  probe_reason="$1"
+  for probe_extcon in /sys/class/extcon/*; do
+    [ -r "$probe_extcon/name" ] && [ -r "$probe_extcon/state" ] || continue
+    probe_name="$(cat "$probe_extcon/name" 2>/dev/null)"
+    case "$probe_name" in *usb2phy*) ;; *) continue ;; esac
+    probe_state="$(cat "$probe_extcon/state" 2>/dev/null)"
+    log "cable detector input reason=$probe_reason path=$probe_extcon name=$probe_name state=$probe_state"
+  done
+}
+ep0_control_ready() {
+  [ -r "/sys/kernel/debug/usb/$UDC/ep0out/transfer_type" ] &&
+    grep -q 'control' "/sys/kernel/debug/usb/$UDC/ep0out/transfer_type" 2>/dev/null
+}
+rk3566_usb_trigger() {
+  soft="/sys/class/udc/$UDC/soft_connect"
+  [ -w "$soft" ] || {
+    log "RK3566 USB soft_connect unavailable; skipping reconnect workaround"
+    return 1
+  }
+
+  state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
+  case "$state" in
+    configured|suspended)
+      log "RK3566 USB host already configured the gadget (state=$state); no reconnect needed"
+      return 0
+      ;;
+  esac
+
+  # The previous test reached UDC state=addressed/high-speed but Windows did
+  # not finish enumeration. ep0out being in control mode only proves the local
+  # endpoint was initialized; it does NOT prove the host accepted descriptors.
+  # Force one physical soft disconnect/reconnect so the host retries from the
+  # device-descriptor stage. This is a one-shot retry per storage-mode entry.
+  if ep0_control_ready; then
+    log "RK3566 USB retry: ep0out=control but UDC state=$state; forcing one soft disconnect/reconnect"
+  else
+    log "RK3566 USB retry: ep0out not ready and UDC state=$state; forcing one soft disconnect/reconnect"
+  fi
+  printf '%s' disconnect > "$soft" 2>/dev/null || {
+    log "RK3566 USB soft_connect=disconnect failed"
+    return 1
+  }
+  sleep 1
+  printf '%s' connect > "$soft" 2>/dev/null || {
+    log "RK3566 USB soft_connect=connect failed"
+    return 1
+  }
+  sleep 1
+  state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
+  speed="$(cat "/sys/class/udc/$UDC/current_speed" 2>/dev/null || echo unknown)"
+  log "RK3566 USB retry completed: UDC state=$state speed=$speed"
+  return 0
+}
+dump_usb_status() {
+  # Read-only snapshots: expose role/VBUS/PHY state without changing hardware.
+  for p in \
+    "/sys/class/udc/$UDC/state" \
+    "/sys/class/udc/$UDC/current_speed" \
+    "/sys/class/udc/$UDC/maximum_speed" \
+    "/sys/class/udc/$UDC/function" \
+    "/sys/class/udc/$UDC/is_otg" \
+    "/sys/class/udc/$UDC/soft_connect" \
+    /sys/class/usb_role/*/role \
+    /sys/class/extcon/*/name \
+    /sys/class/extcon/*/state \
+    /sys/class/typec/*/data_role \
+    /sys/class/typec/*/power_role \
+    /sys/class/phy/*/type \
+    /sys/class/phy/*/power/control \
+    /sys/class/phy/*/power/runtime_status \
+    "/sys/bus/platform/devices/$UDC/dr_mode" \
+    "/sys/bus/platform/devices/$UDC/role" \
+    "/sys/bus/platform/devices/$UDC/status" \
+    "/sys/bus/platform/devices/$UDC/power/control" \
+    "/sys/bus/platform/devices/$UDC/power/runtime_status"; do
+    read_usb_attr "$p"
+  done
+  # Log the exact nested extcon cable entries ROCKNIX uses, not just
+  # /sys/class/extcon summaries (which can hide SDP/CDP cable state).
+  for phy in /sys/devices/platform/"$UDC"/supplier:platform:*usb2phy; do
+    [ -d "$phy" ] || continue
+    log "USB PHY supplier path: $phy"
+    for cable in "$phy"/extcon/*/cable.*; do
+      [ -r "$cable/name" ] && [ -r "$cable/state" ] || continue
+      log "USB extcon cable: $cable name=$(cat "$cable/name" 2>/dev/null) state=$(cat "$cable/state" 2>/dev/null)"
+    done
+  done
+  for d in /sys/bus/platform/devices/*phy*; do
+    [ -d "$d" ] || continue
+    case "$d" in *usb2phy*|*usb-phy*|*phy*) ;; *) continue ;; esac
+    driver="$(readlink "$d/driver" 2>/dev/null || echo none)"
+    log "USB PHY device: $d driver=$driver"
+    for attr in mode otg_mode vbus_det_en vbus_det_en_ctrl power/control power/runtime_status; do
+      read_usb_attr "$d/$attr"
+    done
+  done
+}
+snapshot() {
+  log "===== diagnostic snapshot: $1 ====="
+  log "mountpoint=$MOUNTPOINT device=$DEVICE fstype=$FSTYPE udc=$UDC bound=$BOUND"
+  if [ -d /sys/class/udc ]; then
+    for u in /sys/class/udc/*; do
+      [ -e "$u" ] || continue
+      log "UDC entry: ${u##*/}"
+      [ ! -r "$u/state" ] || log "UDC state: $(cat "$u/state" 2>/dev/null)"
+      [ ! -r "$u/current_speed" ] || log "UDC speed: $(cat "$u/current_speed" 2>/dev/null)"
+    done
+  else
+    log "/sys/class/udc is missing"
+  fi
+  [ ! -e "$G/UDC" ] || log "gadget UDC binding: $(cat "$G/UDC" 2>/dev/null)"
+  [ ! -e "$G/functions/mass_storage.0/lun.0/file" ] || log "mass-storage backing file: $(cat "$G/functions/mass_storage.0/lun.0/file" 2>/dev/null)"
+  # Record descriptor/configuration values while the gadget is still bound;
+  # the post-boot BASEOS-RUN.SH runs only after gadget cleanup.
+  for attr in idVendor idProduct bcdUSB max_speed bDeviceClass bDeviceSubClass bDeviceProtocol bMaxPacketSize0; do
+    read_usb_attr "$G/$attr"
+  done
+  for attr in manufacturer product serialnumber; do
+    read_usb_attr "$G/strings/0x409/$attr"
+  done
+  for attr in MaxPower bmAttributes; do
+    read_usb_attr "$G/configs/b.1/$attr"
+  done
+  read_usb_attr "$G/configs/b.1/strings/0x409/configuration"
+  for attr in file ro removable cdrom nofua stall num_buffers inquiry_string; do
+    read_usb_attr "$G/functions/mass_storage.0/lun.0/$attr"
+  done
+  for p in /sys/kernel/debug/usb/"$UDC"/ep0out/transfer_type /sys/kernel/debug/usb/"$UDC"/ep0in/transfer_type /sys/kernel/debug/usb/"$UDC"/ep0out/queued /sys/kernel/debug/usb/"$UDC"/ep0in/queued; do
+    read_usb_attr "$p"
+  done
+  dump_usb_status
+  if command -v dmesg >/dev/null 2>&1; then
+    # Keep EP0 SETUP records separately: SCSI WRITE diagnostics can evict them
+    # from a fixed dmesg tail before the failure snapshot is collected.
+    dmesg 2>/dev/null | grep -F 'RG353PS EP0 SETUP' | tail -n 16 | sed 's/RG353PS EP0 SETUP/EP0 SETUP request/g' | while IFS= read -r ep0_setup_line; do
+      [ -z "$ep0_setup_line" ] || log "EP0 SETUP history: $ep0_setup_line"
+    done
+    dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|dwc3|usb|phy|gadget|udc|ep0out|mass.storage|vbus|extcon|role.switch|rockchip-usb2phy|otg' | tail -n 100 >> "$DIAG_LOG" || :
+  fi
+}
+diagnose_usb_state_change() {
+  changed_state="$1"
+  log "===== immediate USB controller snapshot: post-CONFIGURED state=$changed_state ====="
+  log "UDC current state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown) speed=$(cat "/sys/class/udc/$UDC/current_speed" 2>/dev/null || echo unknown) gadget_binding=$(cat "$G/UDC" 2>/dev/null || echo empty)"
+  # State changes can precede a full disconnect by tens of seconds. Capture
+  # endpoint queues and controller IRQs now; periodic heartbeat may miss it.
+  for ep_dir in /sys/kernel/debug/usb/"$UDC"/ep*; do
+    [ -d "$ep_dir" ] || continue
+    for attr_path in "$ep_dir"/*; do
+      [ -f "$attr_path" ] || continue
+      attr_name="$(basename "$attr_path")"
+      case "$attr_name" in
+        transfer_type|queued|state|enabled|flags|maxpacket|burst|interval|address|direction|resource_index|type|descriptor|streams)
+          read_usb_attr "$attr_path"
+          ;;
+      esac
+    done
+  done
+  irq_snapshot="$(grep -Ei 'dwc3|usb|mmc|sdhci|dw_mmc' /proc/interrupts 2>/dev/null | tr '\n' ';')"
+  [ -z "$irq_snapshot" ] || log "controller IRQ counters at UDC state transition: $irq_snapshot"
+  if command -v dmesg >/dev/null 2>&1; then
+    dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|RG353PS EP0 SETUP|RG353PS ignoring stale|dwc3|usb2phy|VBUS|extcon|BULK OUT mismatch|mass.storage' | tail -n 100 >> "$DIAG_LOG" || :
+  fi
+}
+cleanup() {
+  cleanup_status=$?
+  trap - EXIT INT TERM HUP
+  log "cleanup entry trigger=${CLEANUP_TRIGGER:-EXIT} status=$cleanup_status elapsed_i=${i:-unset} bound=$BOUND"
+  snapshot "cleanup-before-unbind"
+  if [ -n "$UDC" ] && [ -e "$G/UDC" ]; then printf '\n' > "$G/UDC" 2>/dev/null || :; fi
+  if [ -n "$PROMPT_PID" ]; then kill "$PROMPT_PID" 2>/dev/null || :; wait "$PROMPT_PID" 2>/dev/null || :; fi
+  if [ -e "$G/configs/b.1/f-mass_storage.0" ]; then rm -f "$G/configs/b.1/f-mass_storage.0"; fi
+  if [ -d "$G/functions/mass_storage.0" ]; then
+    printf '\n' > "$G/functions/mass_storage.0/lun.0/file" 2>/dev/null || :
+    rmdir "$G/functions/mass_storage.0" 2>/dev/null || :
+  fi
+  if [ "$HAD_ADB" -eq 1 ] && [ -d "$G/functions/ffs.adb" ]; then
+    ln -sfn "$G/functions/ffs.adb" "$G/configs/b.1/f-ffs.adb" 2>/dev/null || :
+    [ -n "$OLD_UDC" ] && printf '%s' "$OLD_UDC" > "$G/UDC" 2>/dev/null || :
+  fi
+  if [ "$CREATED_GADGET" -eq 1 ]; then
+    rmdir "$G/configs/b.1/strings/0x409" "$G/configs/b.1/strings" "$G/configs/b.1" \
+      "$G/strings/0x409" "$G/strings" "$G" 2>/dev/null || :
+  fi
+  if [ -n "$MOUNTPOINT" ] && [ -n "$DEVICE" ] && ! is_mounted "$MOUNTPOINT"; then
+    mount -t "$FSTYPE" -o rw,noatime "$DEVICE" "$MOUNTPOINT" 2>/dev/null || \
+      log "WARNING: could not remount $DEVICE at $MOUNTPOINT; reboot before further writes"
+  fi
+  if [ -n "$MOUNTPOINT" ] && is_mounted "$MOUNTPOINT"; then
+    cp "$DIAG_LOG" "$MOUNTPOINT/rg353ps-usb-storage.log" 2>/dev/null || :
+    sync
+  fi
+  # Also write to the FAT boot partition so the log can be retrieved from a PC
+  # even if the data partition could not be remounted successfully.
+  if [ -d /mnt/boot ] && grep -q ' /mnt/boot ' /proc/mounts; then
+    cp "$DIAG_LOG" /mnt/boot/rg353ps-usb-storage.log 2>/dev/null || :
+    sync
+  fi
+  rm -f "$ACTIVE" "$REQUEST" "$PAUSED"
+  log "storage mode ended; diagnostic log saved when data partition was mounted"
+}
+CLEANUP_TRIGGER=EXIT
+trap 'CLEANUP_TRIGGER=INT; exit 130' INT
+trap 'CLEANUP_TRIGGER=TERM; exit 143' TERM
+trap 'CLEANUP_TRIGGER=HUP; exit 129' HUP
+trap cleanup EXIT
+
+[ ! -e "$ACTIVE" ] || exit 1
+: > "$ACTIVE"
+HELPER_CKSUM="$(cksum "$0" 2>/dev/null | awk '{print $1 ":" $2}')"
+log "helper_revision=usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v23-single-out-512 cksum=$HELPER_CKSUM"
+# Prefer the removable frontend card (usually the left TF slot). If absent,
+# export only the dedicated BASEOS_DATA partition, never the boot/root system.
+if is_mounted /mnt/TF2; then
+  MOUNTPOINT=/mnt/TF2
+else
+  MOUNTPOINT=/mnt/SDCARD
+fi
+if [ "$BOOT_MODE" -eq 1 ]; then
+  i=0
+  while ! is_mounted "$MOUNTPOINT" && [ "$i" -lt 120 ]; do sleep 1; i=$((i+1)); done
+fi
+if ! is_mounted "$MOUNTPOINT"; then log "$MOUNTPOINT is not mounted; refusing storage mode"; exit 1; fi
+DEVICE=$(awk -v m="$MOUNTPOINT" '$2 == m { print $1; exit }' /proc/mounts)
+FSTYPE=$(awk -v m="$MOUNTPOINT" '$2 == m { print $3; exit }' /proc/mounts)
+case "$DEVICE" in /dev/mmcblk*p[0-9]*) ;; *) log "unsupported block source '$DEVICE'; refusing"; exit 1 ;; esac
+case "$FSTYPE" in vfat|exfat) ;; *) log "filesystem '$FSTYPE' is not supported for PC storage mode"; exit 1 ;; esac
+case "$MOUNTPOINT:$DEVICE" in
+  /mnt/SDCARD:/dev/mmcblk*p3) ;;
+  /mnt/TF2:/dev/mmcblk*p[0-9]*) ;;
+  *) log "refusing unexpected mount source $DEVICE at $MOUNTPOINT"; exit 1 ;;
+esac
+log "requested storage for $DEVICE mounted at $MOUNTPOINT"
+if [ "$BOOT_MODE" -eq 0 ]; then
+  printf '%s\n' "$MOUNTPOINT" > "$REQUEST"
+  i=0
+  while [ ! -e "$PAUSED" ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i+1)); done
+  if [ ! -e "$PAUSED" ]; then log "frontend did not pause; refusing to export a mounted filesystem"; exit 1; fi
+else
+  /usr/sbin/rg353ps-startup-prompt --usb-storage &
+  PROMPT_PID=$!
+  sleep 0.2
+fi
+sync
+if ! umount "$MOUNTPOINT"; then log "could not unmount $MOUNTPOINT; refusing to export"; exit 1; fi
+log "unmounted $MOUNTPOINT; preparing USB mass storage"
+
+grep -q " $CONFIGFS " /proc/mounts 2>/dev/null || mount -t configfs none "$CONFIGFS" 2>/dev/null || {
+  log "configfs mount failed"; exit 1;
+}
+log "available UDCs: $(ls /sys/class/udc 2>/dev/null | tr '\n' ' ')"
+UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
+[ -n "$UDC" ] || { log "no USB device controller found"; exit 1; }
+if [ ! -d "$G" ]; then
+  mkdir -p "$G" || { log "cannot create gadget"; exit 1; }
+  CREATED_GADGET=1
+fi
+if [ -e "$G/UDC" ]; then OLD_UDC=$(cat "$G/UDC" 2>/dev/null || :); fi
+if [ -L "$G/configs/b.1/f-ffs.adb" ]; then HAD_ADB=1; fi
+[ -e "$G/UDC" ] && printf '\n' > "$G/UDC" 2>/dev/null || :
+rm -f "$G/configs/b.1/f-ffs.adb" "$G/configs/b.1/f-mass_storage.0" 2>/dev/null || :
+mkdir -p "$G/strings/0x409" "$G/configs/b.1/strings/0x409" "$G/functions/mass_storage.0" || {
+  log "cannot create mass-storage function"; exit 1;
+}
+printf '0x2207' > "$G/idVendor" 2>/dev/null || :
+printf '0x0006' > "$G/idProduct" 2>/dev/null || :
+printf '0x0200' > "$G/bcdUSB" 2>/dev/null || :
+# Diagnostic A/B test: restore High-Speed while disabling the DWC3
+# ENBLSLPM suspend signal through a board-specific DT quirk. This checks
+# whether HS bulk-OUT stalls depend on the PHY low-power/suspend path.
+# Set speed before UDC binding and fail closed if the requested mode is not set.
+if [ ! -w "$G/max_speed" ] || ! printf 'high-speed' > "$G/max_speed" 2>/dev/null; then
+  log "ERROR: could not set diagnostic storage gadget to high-speed; aborting test"
+  exit 1
+fi
+GADGET_MAX_SPEED=$(cat "$G/max_speed" 2>/dev/null || echo unknown)
+if [ "$GADGET_MAX_SPEED" != "high-speed" ]; then
+  log "ERROR: high-speed setting readback failed (max_speed=$GADGET_MAX_SPEED); aborting test"
+  exit 1
+fi
+log "diagnostic v23: gadget max_speed=$GADGET_MAX_SPEED; 16 KiB buffers, 512-byte serialized WRITE OUT requests, PHY/GUCTL1 and nofua unchanged; standard UDC request initialization and upstream DISCARD recovery; WRITE stage tracing and corrected session-scoped watchdog"
+printf 'BaseOS' > "$G/strings/0x409/manufacturer" 2>/dev/null || :
+printf 'RG353PS USB Storage' > "$G/strings/0x409/product" 2>/dev/null || :
+printf 'storage' > "$G/configs/b.1/strings/0x409/configuration" 2>/dev/null || :
+printf '500' > "$G/configs/b.1/MaxPower" 2>/dev/null || :
+LUN="$G/functions/mass_storage.0/lun.0"
+printf '1' > "$LUN/removable" 2>/dev/null || :
+printf '0' > "$LUN/ro" 2>/dev/null || :
+
+# Windows normally sends SCSI WRITE commands with FUA for removable media,
+# making each write synchronous and preventing block-layer request merging.
+# The Linux MSG documentation explicitly warns that this can dramatically
+# reduce performance. Ignore per-write FUA for this SD-card-backed LUN; normal
+# SYNCHRONIZE CACHE requests are still handled by the gadget. The trade-off is
+# that an unexpected unplug/power loss before the host flushes/ejects can lose
+# recently written data, so the host must safely eject before disconnecting.
+if [ -w "$LUN/nofua" ] && printf '1' > "$LUN/nofua" 2>/dev/null; then
+  log "mass-storage nofua=1; per-write FUA disabled to avoid synchronous SD-card writes"
+else
+  log "WARNING: could not enable mass-storage nofua; writes may be very slow with Windows removal-optimized policy"
+fi
+
+printf '%s' "$DEVICE" > "$LUN/file" || {
+  log "could not assign $DEVICE to mass-storage gadget"; exit 1;
+}
+ln -s "$G/functions/mass_storage.0" "$G/configs/b.1/f-mass_storage.0" || {
+  log "could not link mass-storage function"; exit 1;
+}
+snapshot "immediately-before-bind"
+if ! printf '%s' "$UDC" > "$G/UDC"; then log "could not bind USB controller $UDC"; exit 1; fi
+BOUND=1
+# BaseOS is a minimal BusyBox system (no udev daemon). ROCKNIX normally
+# re-runs this RK3566 workaround on extcon change; mount debugfs and poll here
+# instead so a cable plugged in after the on-screen prompt is handled too.
+grep -q " /sys/kernel/debug " /proc/mounts 2>/dev/null ||
+  mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || :
+sleep 1
+rk3566_usb_trigger || :
+snapshot "one-second-after-bind"
+SESSION_WRITE_SECTORS="$(awk '$3 == "mmcblk0p3" {print $10; exit}' /proc/diskstats 2>/dev/null)"
+log "USB mass storage active for $DEVICE; session-start sectors_written_baseline=${SESSION_WRITE_SECTORS:-unknown}; unplug cable to return to BaseOS"
+
+# A controller that never leaves "not attached" cannot reliably detect
+# cable removal. Do not leave the data partition unmounted indefinitely:
+# wait up to 45 seconds for first attachment, then safely unbind and remount.
+seen=0
+detached=0
+LAST_RESET_STATE=
+i=0
+while [ "$i" -lt 3600 ]; do
+  case "$i" in
+    10|30)
+      log "periodic USB role/PHY sample at ${i}s after gadget bind"
+      dump_usb_status
+      ;;
+  esac
+  # Durable heartbeat with block I/O counters and only new-session kernel events.
+  if [ "$i" -gt 0 ] && [ $((i % 10)) -eq 0 ]; then
+    hb_state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
+    hb_speed="$(cat "/sys/class/udc/$UDC/current_speed" 2>/dev/null || echo unknown)"
+    hb_cable=no
+    if is_data_cable_connected; then
+      hb_cable=yes
+    else
+      log_cable_probe_inputs "heartbeat-${i}s"
+    fi
+    log "transfer heartbeat elapsed=$i seconds udc_state=$hb_state speed=$hb_speed data_cable=$hb_cable"
+    hb_disk="$(grep -E ' mmcblk0(p[0-9]+)? ' /proc/diskstats 2>/dev/null | tr '\n' ';')"
+    hb_write_sectors="$(awk '$3 == "mmcblk0p3" {print $10; exit}' /proc/diskstats 2>/dev/null)"
+    hb_write_delta=unknown
+    case "$SESSION_WRITE_SECTORS:$hb_write_sectors" in
+      *[!0-9:]*|:*|*:) ;;
+      *) hb_write_delta=$((hb_write_sectors - SESSION_WRITE_SECTORS)) ;;
+    esac
+    [ -z "$hb_disk" ] || log "diskstats $hb_disk session_write_sectors_delta=$hb_write_delta"
+    hb_uptime="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
+    # Preserve new SCSI entries by their monotonically increasing command
+    # sequence number. A fixed dmesg tail can miss the WRITE that stalled if
+    # PHY polling produces enough lines afterward.
+    # Track START and FINISH independently. A finish record uses the same
+    # sequence as its start, so one shared "seq > last" cursor would discard it.
+    hb_scsi_batch="$(dmesg 2>/dev/null | grep -F 'baseos-msdiag:' | awk \
+      -v last_start="$LAST_SCSI_START_SEQ" \
+      -v last_finish="$LAST_SCSI_FINISH_SEQ" '
+      /baseos-msdiag: SCSI start seq=/ {
+        if (match($0, /SCSI start seq=[0-9]+/)) {
+          item = substr($0, RSTART, RLENGTH)
+          sub(/^SCSI start seq=/, "", item)
+          seq = item + 0
+          if (seq > max_start) max_start = seq
+          if (seq > last_start) print $0
+        }
+        next
+      }
+      /baseos-msdiag: SCSI finish / {
+        if (match($0, /SCSI finish .*seq=[0-9]+/)) {
+          item = substr($0, RSTART, RLENGTH)
+          sub(/^.*seq=/, "", item)
+          seq = item + 0
+          if (seq > max_finish) max_finish = seq
+          if (seq > last_finish) print $0
+        }
+        next
+      }
+      END {
+        print "__BASEOS_MAX_START_SEQ=" (max_start + 0)
+        print "__BASEOS_MAX_FINISH_SEQ=" (max_finish + 0)
+      }
+    ')"
+    hb_scsi_max_start="$(printf '%s\n' "$hb_scsi_batch" | sed -n 's/^__BASEOS_MAX_START_SEQ=//p' | tail -n 1)"
+    hb_scsi_max_finish="$(printf '%s\n' "$hb_scsi_batch" | sed -n 's/^__BASEOS_MAX_FINISH_SEQ=//p' | tail -n 1)"
+    hb_scsi_new="$(printf '%s\n' "$hb_scsi_batch" | grep -v '^__BASEOS_MAX_.*_SEQ=' || :)"
+    if [ -n "$hb_scsi_new" ]; then
+      printf '%s\n' "$hb_scsi_new" | while IFS= read -r hb_scsi_line; do
+        [ -z "$hb_scsi_line" ] || log "SCSI command diagnostic: $hb_scsi_line"
+      done
+    fi
+    # Preserve the recent EP0 SETUP sequence at each heartbeat, but only emit
+    # it again if that sequence changed since the previous heartbeat.
+    hb_ep0_setups="$(dmesg 2>/dev/null | grep -F 'RG353PS EP0 SETUP' | tail -n 12)"
+    if [ -n "$hb_ep0_setups" ] && [ "$hb_ep0_setups" != "$LAST_EP0_SETUPS" ]; then
+      printf '%s\n' "$hb_ep0_setups" | sed 's/RG353PS EP0 SETUP/EP0 SETUP request/g' | while IFS= read -r hb_ep0_setup_line; do
+        [ -z "$hb_ep0_setup_line" ] || log "recent EP0 SETUP: $hb_ep0_setup_line"
+      done
+      LAST_EP0_SETUPS="$hb_ep0_setups"
+    fi
+    case "$hb_scsi_max_start" in
+      ''|*[!0-9]*) ;;
+      *) [ "$hb_scsi_max_start" -le "$LAST_SCSI_START_SEQ" ] || LAST_SCSI_START_SEQ="$hb_scsi_max_start" ;;
+    esac
+    case "$hb_scsi_max_finish" in
+      ''|*[!0-9]*) ;;
+      *) [ "$hb_scsi_max_finish" -le "$LAST_SCSI_FINISH_SEQ" ] || LAST_SCSI_FINISH_SEQ="$hb_scsi_max_finish" ;;
+    esac
+
+    # Detect a stuck host-to-device WRITE, not an idle storage session. A
+    # pending SCSI WRITE with no mmcblk0p3 sector progress is the useful trigger.
+    hb_pending_scsi="$(dmesg 2>/dev/null | awk -v now="$hb_uptime" -v session_start="$KERNEL_ERR_START_SEC" '
+      # The helper mirrors these records into /dev/kmsg, creating nested
+      # duplicate SCSI lines. Exclude wrappers so age/oldest use kernel timestamps.
+      /baseos-usb-storage:/ { next }
+      /baseos-msdiag: SCSI start seq=/ {
+        if (!match($0, /SCSI start seq=[0-9]+/)) next
+        seq = substr($0, RSTART, RLENGTH)
+        sub(/^SCSI start seq=/, "", seq)
+        if (!match($0, /^\[[[:space:]]*[0-9.]+/)) next
+        started = substr($0, RSTART, RLENGTH)
+        sub(/^\[[[:space:]]*/, "", started)
+        sub(/\]$/, "", started)
+        if ((started + 0) < (session_start + 0)) next
+        starts[seq] = $0
+        times[seq] = started + 0
+        next
+      }
+      /baseos-msdiag: SCSI finish / {
+        if (match($0, /SCSI finish .*seq=[0-9]+/)) {
+          seq = substr($0, RSTART, RLENGTH)
+          sub(/^.*seq=/, "", seq)
+          finished[seq] = 1
+        }
+        next
+      }
+      END {
+        count = 0
+        oldest_age = 0
+        oldest = ""
+        for (seq in starts) {
+          if (seq in finished) continue
+          age = now - times[seq]
+          if (age < 20) continue
+          count++
+          if (age > oldest_age) {
+            oldest_age = age
+            oldest = starts[seq]
+          }
+        }
+        if (count)
+          printf "pending_count=%d oldest_age=%.1fs oldest=%s", count, oldest_age, oldest
+      }
+    ')"
+
+    if [ "$hb_state" = "configured" ] && [ "$hb_cable" = "yes" ] &&
+       [ -n "$hb_write_sectors" ] && [ -n "$hb_pending_scsi" ]; then
+      if [ -n "$LAST_WRITE_SECTORS" ] && [ "$hb_write_sectors" = "$LAST_WRITE_SECTORS" ]; then
+        NO_WRITE_PROGRESS_SECONDS=$((NO_WRITE_PROGRESS_SECONDS + 10))
+      else
+        NO_WRITE_PROGRESS_SECONDS=0
+        LAST_STALL_DIAG_SECONDS=0
+      fi
+    else
+      NO_WRITE_PROGRESS_SECONDS=0
+      LAST_STALL_DIAG_SECONDS=0
+    fi
+    [ -z "$hb_write_sectors" ] || LAST_WRITE_SECTORS="$hb_write_sectors"
+
+    if [ "$NO_WRITE_PROGRESS_SECONDS" -ge 30 ] &&
+       [ $((NO_WRITE_PROGRESS_SECONDS - LAST_STALL_DIAG_SECONDS)) -ge 30 ]; then
+      log "WRITE stall watchdog: no backing-partition sector progress for $NO_WRITE_PROGRESS_SECONDS s; sectors_written=$hb_write_sectors; $hb_pending_scsi"
+      # Endpoint state is normally quiet during the failure, so sample every
+      # exposed DWC3 debugfs endpoint attribute at the stall rather than only
+      # recording EP0. Missing attributes are harmless on kernel variants.
+      for ep_dir in /sys/kernel/debug/usb/"$UDC"/ep*; do
+        [ -d "$ep_dir" ] || continue
+        for attr_path in "$ep_dir"/*; do
+          [ -f "$attr_path" ] || continue
+          attr_name="$(basename "$attr_path")"
+          case "$attr_name" in
+            transfer_type|queued|state|enabled|flags|maxpacket|burst|interval|address|direction|resource_index|type|descriptor|streams)
+              read_usb_attr "$attr_path"
+              ;;
+          esac
+        done
+      done
+      hb_irqs="$(grep -Ei 'dwc3|usb|mmc|sdhci|dw_mmc' /proc/interrupts 2>/dev/null | tr '\n' ';')"
+      [ -z "$hb_irqs" ] || log "controller IRQ counters during WRITE stall: $hb_irqs"
+      hb_stall_events="$(dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|BULK OUT mismatch|RG353PS DWC3 bulk-out event|dwc3.*(error|timeout|failed|reset|stall|xfernotready)|mmc.*(error|timeout|reset)|I/O error' | tail -n 30 | tr '\n' ';')"
+      [ -z "$hb_stall_events" ] || log "recent kernel/USB events during WRITE stall: $hb_stall_events"
+      LAST_STALL_DIAG_SECONDS="$NO_WRITE_PROGRESS_SECONDS"
+    fi
+    hb_errors="$(dmesg 2>/dev/null | awk -v start="$KERNEL_ERR_START_SEC" '{ if (match($0, /^\[[[:space:]]*[0-9.]+/)) { t=substr($0, RSTART, RLENGTH); sub(/^\[[[:space:]]*/, "", t); if ((t+0) >= (start+0)) print } }' | grep -Ei 'mmc.*(error|timeout|reset)|I/O error|Buffer I/O|dwc3.*(error|timeout|unexpected|failed|end transfer)|ep0.*(error|failed)|usb.*(error|reset)' | grep -v 'baseos-usb-storage:' | tail -n 5 | tr '\n' ';')"
+    if [ -n "$hb_errors" ] && [ "$hb_errors" != "$LAST_KERNEL_ERRORS" ]; then
+      log "kernel events since storage start: $hb_errors"
+      LAST_KERNEL_ERRORS="$hb_errors"
+    fi
+    sync
+  fi
+  state=$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || printf 'not attached')
+  # A Windows "Unknown USB device / Device Descriptor Request Failed" can
+  # leave the UDC in powered/default/addressed forever. Count success only
+  # after the host reaches CONFIGURED, and always restore the local mount
+  # after 45 seconds if that never happens.
+  case "$state" in
+    configured)
+      if [ "$seen" -eq 0 ]; then
+        log "UDC reached successful enumeration state=configured after ${i}s"
+      fi
+      seen=1
+      detached=0
+      LAST_RESET_STATE=
+      RESET_NOT_CONFIGURED_SECONDS=0
+      ;;
+    suspended)
+      # A suspend state is only valid evidence of a previously enumerated USB
+      # device if CONFIGURED was observed earlier in this session. On this
+      # RK3566 port, an attached DC cable can leave UDC suspended/addressed
+      # even when Windows fails the descriptor request. Do not let that state
+      # suppress the 45-second enumeration-failure timeout.
+      if [ "$seen" -eq 1 ]; then
+        if is_data_cable_connected; then
+          detached=0
+          LAST_RESET_STATE=
+          RESET_NOT_CONFIGURED_SECONDS=0
+        else
+          RESET_NOT_CONFIGURED_SECONDS=0
+          [ "$detached" -ne 0 ] || log_cable_probe_inputs "udc-state-$state"
+          detached=$((detached+1))
+        fi
+      elif [ "$i" -ge 45 ]; then
+        log "UDC is suspended but never reached configured within 45 seconds; aborting storage mode and restoring local mount"
+        break
+      elif [ "$i" -eq 1 ]; then
+        log "UDC suspended before configured; keeping enumeration-failure timeout armed"
+      fi
+      ;;
+    *)
+      if [ "$seen" -eq 1 ]; then
+        # UDC state=default may mean the host reset the USB bus, not that the
+        # cable was unplugged. Never dismantle the gadget while SDP/CDP is
+        # still asserted; allow Windows to enumerate the device again.
+        if is_data_cable_connected; then
+          if [ "$LAST_RESET_STATE" != "$state" ]; then
+            log "UDC left configured (state=$state) but USB data cable remains detected; preserving gadget for re-enumeration"
+            diagnose_usb_state_change "$state"
+            LAST_RESET_STATE="$state"
+          fi
+          detached=0
+          RESET_NOT_CONFIGURED_SECONDS=$((RESET_NOT_CONFIGURED_SECONDS+1))
+          # If a bus reset leaves the DWC3 UDC stuck outside CONFIGURED for
+          # 15 seconds while the PHY still reports a PC data connection, do
+          # one guarded gadget unbind/rebind. soft_connect alone was tested
+          # and left this controller stuck at "not attached" for the rest of
+          # the session, so reset the gadget binding instead.
+          if [ "$RESET_NOT_CONFIGURED_SECONDS" -ge 15 ] && [ "$RESET_RECOVERY_ATTEMPTED" -eq 0 ]; then
+            RESET_RECOVERY_ATTEMPTED=1
+            log "UDC has remained state=$state for ${RESET_NOT_CONFIGURED_SECONDS}s with SDP/CDP still present; attempting one gadget UDC unbind/rebind"
+            recovery_unbind_error=
+            if [ -e "$G/UDC" ] && recovery_unbind_error="$(printf '\n' 2>&1 > "$G/UDC")"; then
+              BOUND=0
+              sleep 1
+              unbind_binding="$(cat "$G/UDC" 2>/dev/null || echo unreadable)"
+              log "UDC unbind requested; binding_after_unbind=${unbind_binding:-empty}"
+              recovery_bind_error=
+              if recovery_bind_error="$(printf '%s' "$UDC" 2>&1 > "$G/UDC")"; then
+                BOUND=1
+                sleep 3
+                recovery_state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
+                recovery_speed="$(cat "/sys/class/udc/$UDC/current_speed" 2>/dev/null || echo unknown)"
+                recovery_binding="$(cat "$G/UDC" 2>/dev/null || echo empty)"
+                log "UDC rebind result state=$recovery_state speed=$recovery_speed gadget_binding=$recovery_binding"
+              else
+                recovery_binding="$(cat "$G/UDC" 2>/dev/null || echo unreadable)"
+                recovery_state="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
+                log "UDC rebind failed: error=${recovery_bind_error:-no stderr} state=$recovery_state gadget_binding=${recovery_binding:-empty}; local data partition stays unmounted for safety"
+              fi
+            else
+              log "UDC unbind failed: error=${recovery_unbind_error:-no stderr}; skipped recovery rebind"
+            fi
+            RESET_NOT_CONFIGURED_SECONDS=0
+          fi
+        else
+          RESET_NOT_CONFIGURED_SECONDS=0
+          [ "$detached" -ne 0 ] || log_cable_probe_inputs "udc-state-$state"
+          detached=$((detached+1))
+        fi
+      elif [ "$i" -ge 45 ]; then
+        log "UDC did not reach configured within 45 seconds (last state=$state); aborting storage mode and restoring local mount"
+        break
+      fi
+      ;;
+  esac
+  # After a successful enumeration, return only after three samples with no
+  # PHY/extcon data-cable indication. A transient UDC reset alone is not unplug.
+  [ "$detached" -lt 3 ] || { log "USB cable no longer detected for three samples; restoring local mount"; break; }
+  sleep 1
+  i=$((i+1))
+done
+if [ "$i" -ge 3600 ]; then log "storage mode timed out after one hour; restoring local mount"; fi
+exit 0

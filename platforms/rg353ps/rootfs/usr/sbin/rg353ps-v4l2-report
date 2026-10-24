@@ -1,0 +1,54 @@
+#!/bin/sh
+# Capture V4L2 capabilities and formats for the RG353PS Hantro bring-up.
+set -u
+
+OUT="${1:-/tmp/rg353ps-v4l2-report.txt}"
+mkdir -p "$(dirname "$OUT")" 2>/dev/null || :
+
+{
+  echo "===== RG353PS V4L2 / Hantro report ====="
+  date 2>/dev/null || :
+  uname -a
+  echo
+
+  echo "===== MODULES ====="
+  grep -E 'hantro_vpu|v4l2_jpeg' /proc/modules 2>/dev/null || :
+  echo
+
+  echo "===== VIDEO NODES ====="
+  ls -l /dev/video* /dev/media* 2>&1 || :
+  echo
+
+  echo "===== V4L2 TOOL ====="
+  if ! command -v v4l2-ctl >/dev/null 2>&1; then
+    echo "ERROR: v4l2-ctl is not installed"
+  else
+    v4l2-ctl --version 2>&1 || :
+    echo
+    echo "===== V4L2 DEVICES ====="
+    v4l2-ctl --list-devices 2>&1 || :
+
+    for d in /dev/video0 /dev/video1; do
+      [ -e "$d" ] || continue
+      echo
+      echo "===== $d: DEVICE CAPABILITIES ====="
+      v4l2-ctl -d "$d" --all 2>&1 || :
+
+      echo
+      echo "===== $d: CAPTURE FORMATS ====="
+      v4l2-ctl -d "$d" --list-formats-ext 2>&1 || :
+
+      echo
+      echo "===== $d: OUTPUT FORMATS ====="
+      v4l2-ctl -d "$d" --list-formats-out-ext 2>&1 || :
+    done
+  fi
+
+  echo
+  echo "===== RELEVANT KERNEL LOG ====="
+  dmesg 2>&1 | grep -iE 'hantro|video-codec|iommu|fault|timeout|power-management|v4l2' || :
+  echo
+  echo "===== END ====="
+} 2>&1 | tee "$OUT"
+
+echo "Report saved to: $OUT"

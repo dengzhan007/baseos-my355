@@ -1,0 +1,31 @@
+From 7590f29e2cd72fb8ed50efde3cdb786d74dc1f10 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] usb: dwc3: Increase DWC3 controller halt timeout
+
+diff --git a/drivers/usb/dwc3/gadget.c b/drivers/usb/dwc3/gadget.c
+--- a/drivers/usb/dwc3/gadget.c
++++ b/drivers/usb/dwc3/gadget.c
+@@ -1396,7 +1396,7 @@ static int dwc3_gadget_set_selfpowered(struct usb_gadget *g,
+ static int dwc3_gadget_run_stop(struct dwc3 *dwc, int is_on, int suspend)
+ {
+ 	u32			reg;
+-	u32			timeout = 500;
++	u32			timeout = 2000;
+ 
+ 	reg = dwc3_readl(dwc->regs, DWC3_DCTL);
+ 	if (is_on) {
+@@ -1425,6 +1425,7 @@ static int dwc3_gadget_run_stop(struct dwc3 *dwc, int is_on, int suspend)
+ 	dwc3_writel(dwc->regs, DWC3_DCTL, reg);
+ 
+ 	do {
++		udelay(2000);
+ 		reg = dwc3_readl(dwc->regs, DWC3_DSTS);
+ 		if (is_on) {
+ 			if (!(reg & DWC3_DSTS_DEVCTRLHLT))
+@@ -1436,7 +1437,6 @@ static int dwc3_gadget_run_stop(struct dwc3 *dwc, int is_on, int suspend)
+ 		timeout--;
+ 		if (!timeout)
+ 			return -ETIMEDOUT;
+-		udelay(1);
+ 	} while (1);
+ 
+ 	dev_vdbg(dwc->dev, "gadget %s data soft-%s\n",
