@@ -924,13 +924,22 @@ if "RG353PS EP2 DEPCMD begin" not in func:
 	    (DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_STARTTRANSFER ||
 	     DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_UPDATETRANSFER ||
 	     DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_ENDTRANSFER)) {
+		struct dwc3_request *rg_req =
+			list_first_entry_or_null(&dep->started_list, struct dwc3_request, list);
+		struct dwc3_trb *rg_trb = rg_req ? rg_req->trb : NULL;
 		dev_info(dwc->dev,
-			"RG353PS EP2 DEPCMD begin cmd=%u raw=%08x params=%08x/%08x/%08x flags=%08x resource_index=%u trb_enq=%u trb_deq=%u link_state=%u speed=%d connected=%u DCTL=%08x DSTS=%08x\n",
+			"RG353PS EP2 DEPCMD begin cmd=%u raw=%08x params=%08x/%08x/%08x flags=%08x resource_index=%u trb_enq=%u trb_deq=%u req=%p req_status=%d req_len=%u req_actual=%u req_remaining=%u trb_dma=%llx trb_bpl=%08x trb_bph=%08x trb_size=%08x trb_ctrl=%08x link_state=%u speed=%d connected=%u GEVNTCOUNT=%08x GEVNTSIZ=%08x DCTL=%08x DSTS=%08x GUSB2PHYCFG=%08x GUCTL1=%08x\n",
 			DWC3_DEPCMD_CMD(cmd), cmd, params ? params->param0 : 0, params ? params->param1 : 0,
 			params ? params->param2 : 0, dep->flags, dep->resource_index,
-			dep->trb_enqueue, dep->trb_dequeue, dwc->link_state,
-			dwc->gadget->speed, dwc->connected,
-			dwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS));
+			dep->trb_enqueue, dep->trb_dequeue, rg_req, rg_req ? rg_req->request.status : -1,
+			rg_req ? rg_req->request.length : 0, rg_req ? rg_req->request.actual : 0,
+			rg_req ? rg_req->remaining : 0, rg_req ? (unsigned long long)rg_req->trb_dma : 0ULL,
+			rg_trb ? le32_to_cpu(rg_trb->bpl) : 0, rg_trb ? le32_to_cpu(rg_trb->bph) : 0,
+			rg_trb ? le32_to_cpu(rg_trb->size) : 0, rg_trb ? le32_to_cpu(rg_trb->ctrl) : 0,
+			dwc->link_state, dwc->gadget->speed, dwc->connected,
+			dwc3_readl(dwc, DWC3_GEVNTCOUNT(0)), dwc3_readl(dwc, DWC3_GEVNTSIZ(0)),
+			dwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS),
+		dwc3_readl(dwc, DWC3_GUSB2PHYCFG(0)), dwc3_readl(dwc, DWC3_GUCTL1));
 	}
 """
     if func.count(cmd_anchor) != 1:
@@ -943,13 +952,23 @@ if "RG353PS EP2 DEPCMD done" not in func:
 	    (DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_STARTTRANSFER ||
 	     DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_UPDATETRANSFER ||
 	     DWC3_DEPCMD_CMD(cmd) == DWC3_DEPCMD_ENDTRANSFER)) {
+		struct dwc3_request *rg_req =
+			list_first_entry_or_null(&dep->started_list, struct dwc3_request, list);
+		struct dwc3_trb *rg_trb = rg_req ? rg_req->trb : NULL;
 		dev_info(dwc->dev,
-			"RG353PS EP2 DEPCMD done cmd=%u ret=%d cmd_status=%d raw=%08x flags=%08x resource_index=%u trb_enq=%u trb_deq=%u link_state=%u speed=%d connected=%u DCTL=%08x DSTS=%08x\n",
+			"RG353PS EP2 DEPCMD done cmd=%u ret=%d cmd_status=%d raw=%08x flags=%08x resource_index=%u trb_enq=%u trb_deq=%u req=%p req_status=%d req_len=%u req_actual=%u req_remaining=%u trb_dma=%llx trb_bpl=%08x trb_bph=%08x trb_size=%08x trb_ctrl=%08x link_state=%u speed=%d connected=%u GEVNTCOUNT=%08x GEVNTSIZ=%08x DCTL=%08x DSTS=%08x GUSB2PHYCFG=%08x GUCTL1=%08x\n",
 			DWC3_DEPCMD_CMD(cmd), ret, cmd_status,
 			dwc3_readl(dwc, DWC3_DEPCMD(epnum)), dep->flags,
-			dep->resource_index, dep->trb_enqueue, dep->trb_dequeue,
+			dep->resource_index, dep->trb_enqueue, dep->trb_dequeue, rg_req,
+			rg_req ? rg_req->request.status : -1, rg_req ? rg_req->request.length : 0,
+			rg_req ? rg_req->request.actual : 0, rg_req ? rg_req->remaining : 0,
+			rg_req ? (unsigned long long)rg_req->trb_dma : 0ULL,
+			rg_trb ? le32_to_cpu(rg_trb->bpl) : 0, rg_trb ? le32_to_cpu(rg_trb->bph) : 0,
+			rg_trb ? le32_to_cpu(rg_trb->size) : 0, rg_trb ? le32_to_cpu(rg_trb->ctrl) : 0,
 			dwc->link_state, dwc->gadget->speed, dwc->connected,
-			dwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS));
+			dwc3_readl(dwc, DWC3_GEVNTCOUNT(0)), dwc3_readl(dwc, DWC3_GEVNTSIZ(0)),
+			dwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS),
+			dwc3_readl(dwc, DWC3_GUSB2PHYCFG(0)), dwc3_readl(dwc, DWC3_GUCTL1));
 	}
 """
     if func.count(done_marker) != 1:
@@ -1428,7 +1447,7 @@ source.write_text(text)
 print("Applied per-request Bulk-OUT ownership and SCSI/CSW tag correlation diagnostics")
 PYCODE
 
-      # High-Speed diagnostic v14: the v12 power-change property targets GUSB3PIPECTL (SuperSpeed).
+      # High-Speed diagnostic v15: the v12 power-change property targets GUSB3PIPECTL (SuperSpeed).
       # Keep only the tested USB2 PHY and GUCTL1 settings; improve EP2 event/request visibility.
       # Do not change speed, request queueing, FSG buffer, or noFUA behavior.
       python3 - <<PYCODE
@@ -1438,7 +1457,7 @@ source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
 if not source.is_file():
     raise SystemExit("Could not locate RG353PS device tree for High-Speed PHY test")
 text = source.read_text()
-marker = "BASEOS_RG353PS_TEST_DWC3_EP2_EVENTTRACE_V13"
+marker = "BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V15"
 if marker not in text:
     # The fcc00000.usb controller is declared in the included rk356x base DTSI
     # with label usb_host0_xhci; this is the actual DWC3 controller on RK3566.
@@ -1450,7 +1469,7 @@ if marker not in text:
 	snps,dis-tx-ipgap-linecheck-quirk;
 };
 
-/* BASEOS_RG353PS_TEST_DWC3_EP2_EVENTTRACE_V13 */
+/* BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V15 */
 """
     text = text.rstrip() + "\n" + addition
 source.write_text(text)
@@ -1460,7 +1479,7 @@ for prop in ("snps,dis_enblslpm_quirk;", "snps,dis-u2-freeclk-exists-quirk;",
         raise SystemExit("Failed to apply RG353PS High-Speed PHY quirk: " + prop)
 if marker not in text or "&usb_host0_xhci {" not in text:
     raise SystemExit("RG353PS DWC3 node override is missing")
-print("Applied RG353PS USB2 High-Speed v14 diagnostics: retained USB2/GUCTL1 PHY settings and added raw EP2 event tracing")
+print("Applied RG353PS USB2 High-Speed v15 diagnostics: raw EP2 events plus active TRB state around endpoint commands")
 PYCODE
 
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.
