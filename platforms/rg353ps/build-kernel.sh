@@ -1205,9 +1205,154 @@ source.write_text(text)
 print("Applied RG353PS WRITE(10) Bulk-OUT queue/completion diagnostics")
 PYCODE
 
-      # High-Speed A/B test v11: the v10 ENBLSLPM, U2_FREECLK_EXISTS, and SUSPHY
-      # settings did not stop the Bulk-OUT stall. Add only the TX IPGAP line-state
-      # check quirk for this run; keep request queueing and all other settings fixed.
+      # Correlate each asynchronous Bulk-OUT callback to the SCSI command that queued it.
+      # common->cmnd is shared and may already point at a newer command by callback time.
+      python3 - <<PYCODE
+from pathlib import Path
+import re
+
+source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
+text = source.read_text()
+
+# Store the current logged SCSI sequence on fsg_common so each request can
+# copy it into the individual buffer head before queueing.
+common_marker = "\tu32 tag;\n\tu32 residue;"
+common_new = "\tu32 tag;\n\tu32 rg353ps_storage_seq_current;\n\tu32 residue;"
+common_count = text.count(common_marker)
+if common_count == 1:
+    text = text.replace(common_marker, common_new, 1)
+elif text.count(common_new) != 1:
+    raise SystemExit("Could not uniquely add current SCSI sequence to fsg_common: " + str(common_count))
+
+scsi_start = text.index("static int do_scsi_command(")
+scsi_end = text.find("\nstatic int ", scsi_start + 1)
+if scsi_end < 0:
+    raise SystemExit("Could not locate end of do_scsi_command()")
+scsi_func = text[scsi_start:scsi_end]
+seq_anchor = "\n\tdump_cdb(common);"
+seq_insert = "\n\tcommon->rg353ps_storage_seq_current = rg353ps_storage_id;\n\tdump_cdb(common);"
+seq_count = scsi_func.count(seq_anchor)
+if seq_count == 1:
+    scsi_func = scsi_func.replace(seq_anchor, seq_insert, 1)
+elif scsi_func.count(seq_insert) != 1:
+    raise SystemExit("Could not uniquely assign SCSI sequence before command processing: " + str(seq_count))
+text = text[:scsi_start] + scsi_func + text[scsi_end:]
+
+# Include the BOT tag in SCSI start/finish records so they can be matched
+# to CSW submit/completion records.
+text, start_fmt_count = re.subn(
+    r"baseos-msdiag: SCSI start seq=%u op=0x%02x",
+    "baseos-msdiag: SCSI start seq=%u tag=%u op=0x%02x", text, count=1)
+if start_fmt_count != 1:
+    raise SystemExit("Could not uniquely extend SCSI start log with BOT tag")
+text, finish_fmt_count = re.subn(
+    r"baseos-msdiag: SCSI finish seq=%u op=0x%02x",
+    "baseos-msdiag: SCSI finish seq=%u tag=%u op=0x%02x", text, count=1)
+if finish_fmt_count != 1:
+    raise SystemExit("Could not uniquely extend SCSI finish log with BOT tag")
+tag_args = "\t\t\trg353ps_storage_id, common->cmnd[0],"
+tag_args_new = "\t\t\trg353ps_storage_id, common->tag, common->cmnd[0],"
+tag_count = text.count(tag_args)
+if tag_count != 2:
+    raise SystemExit("Expected two SCSI log argument lists to add BOT tags, found " + str(tag_count))
+text = text.replace(tag_args, tag_args_new)
+
+# Add durable ownership metadata to each buffer head that can own a Bulk-OUT request.
+header = Path("$SRC/drivers/usb/gadget/function/storage_common.h")
+htext = header.read_text()
+buff_start = htext.find("struct fsg_buffhd {")
+if buff_start < 0:
+    raise SystemExit("Could not locate struct fsg_buffhd in storage_common.h")
+buff_end = htext.find("\n};", buff_start)
+if buff_end < 0:
+    raise SystemExit("Could not locate end of struct fsg_buffhd")
+buff = htext[buff_start:buff_end]
+if "rg353ps_out_seq" not in buff:
+    field_pattern = re.compile(r"(?m)^([ \t]*unsigned int[ \t]+bulk_out_intended_length;[ \t]*)$")
+    replacement = (
+        r"\1\n\t/* Diagnostic owner metadata for this asynchronous Bulk-OUT request. */\n"
+        r"\tu32 rg353ps_out_seq;\n"
+        r"\tu32 rg353ps_out_tag;\n"
+        r"\tu32 rg353ps_out_lba;\n"
+        r"\tu8 rg353ps_out_op;"
+    )
+    buff2, field_count = field_pattern.subn(replacement, buff, count=1)
+    if field_count != 1:
+        raise SystemExit("Could not uniquely add per-request metadata to fsg_buffhd: " + str(field_count))
+    htext = htext[:buff_start] + buff2 + htext[buff_end:]
+    header.write_text(htext)
+
+# Save request owner fields before the endpoint request is queued.
+out_start = text.index("static bool start_out_transfer(")
+out_end = text.index("static int sleep_thread(", out_start)
+out_func = text[out_start:out_end]
+state_anchor = "\tbh->state = BUF_STATE_RECEIVING;"
+state_new = (
+    state_anchor + "\n"
+    "\tbh->rg353ps_out_seq = common->rg353ps_storage_seq_current;\n"
+    "\tbh->rg353ps_out_tag = common->tag;\n"
+    "\tbh->rg353ps_out_op = common->cmnd[0];\n"
+    "\tbh->rg353ps_out_lba = common->cmnd[0] == 0x2a ? get_unaligned_be32(&common->cmnd[2]) : 0;\n"
+    "\tif (bh->rg353ps_out_op == 0x2a)\n"
+    "\t\tpr_info(\"baseos-msdiag: BULK OUT owner seq=%u tag=%u op=0x%02x lba=%u req=%p intended=%u req_len=%u\\\\n\",\n"
+    "\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,\n"
+    "\t\t\tbh->rg353ps_out_lba, bh->outreq, bh->bulk_out_intended_length,\n"
+    "\t\t\tbh->outreq->length);"
+)
+state_count = out_func.count(state_anchor)
+if state_count == 1:
+    out_func = out_func.replace(state_anchor, state_new, 1)
+elif out_func.count("BULK OUT owner seq=%u") != 1:
+    raise SystemExit("Could not uniquely tag queued Bulk-OUT request: " + str(state_count))
+text = text[:out_start] + out_func + text[out_end:]
+
+# Completion callbacks use per-request metadata, not the shared command buffer.
+complete_start = text.index("static void bulk_out_complete(")
+complete_end = text.index("static int _fsg_common_get_max_lun(", complete_start)
+complete_func = text[complete_start:complete_end]
+
+old_mismatch = (
+    'pr_info("baseos-msdiag: BULK OUT mismatch op=0x%02x status=%d actual=%u intended=%u\\\\n",\n'
+    '\t\t\tcommon->cmnd[0], req->status, req->actual,\n'
+    '\t\t\tbh->bulk_out_intended_length);'
+)
+new_mismatch = (
+    'pr_info("baseos-msdiag: BULK OUT mismatch seq=%u tag=%u op=0x%02x lba=%u req=%p status=%d actual=%u intended=%u\\\\n",\n'
+    '\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,\n'
+    '\t\t\tbh->rg353ps_out_lba, req, req->status, req->actual,\n'
+    '\t\t\tbh->bulk_out_intended_length);'
+)
+if old_mismatch in complete_func:
+    complete_func = complete_func.replace(old_mismatch, new_mismatch, 1)
+elif "BULK OUT mismatch seq=%u tag=%u" not in complete_func:
+    raise SystemExit("Could not replace shared-command Bulk-OUT mismatch log")
+
+old_complete = (
+    'if (common->cmnd[0] == 0x2a)\n'
+    '\t\tpr_info("baseos-msdiag: BULK OUT complete req=%p status=%d actual=%u intended=%u\\\\n",\n'
+    '\t\t\treq, req->status, req->actual,\n'
+    '\t\t\tbh->bulk_out_intended_length);'
+)
+new_complete = (
+    'if (bh->rg353ps_out_op == 0x2a)\n'
+    '\t\tpr_info("baseos-msdiag: BULK OUT complete seq=%u tag=%u op=0x%02x lba=%u req=%p status=%d actual=%u intended=%u\\\\n",\n'
+    '\t\t\tbh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,\n'
+    '\t\t\tbh->rg353ps_out_lba, req, req->status, req->actual,\n'
+    '\t\t\tbh->bulk_out_intended_length);'
+)
+if old_complete in complete_func:
+    complete_func = complete_func.replace(old_complete, new_complete, 1)
+elif "BULK OUT complete seq=%u tag=%u" not in complete_func:
+    raise SystemExit("Could not replace shared-command Bulk-OUT completion log")
+
+text = text[:complete_start] + complete_func + text[complete_end:]
+source.write_text(text)
+print("Applied per-request Bulk-OUT ownership and SCSI/CSW tag correlation diagnostics")
+PYCODE
+
+      # High-Speed A/B test v12: the v11 TX IPGAP linecheck setting did not stop stalls.
+      # Add only the PHY power-change delay quirk from the RK3566 DWC3 workaround set.
+      # Keep USB speed, request queueing, FSG buffer and noFUA behavior unchanged.
       python3 - <<PYCODE
 from pathlib import Path
 
@@ -1215,7 +1360,7 @@ source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
 if not source.is_file():
     raise SystemExit("Could not locate RG353PS device tree for High-Speed PHY test")
 text = source.read_text()
-marker = "BASEOS_RG353PS_TEST_DISABLE_TX_IPGAP_LINECHECK"
+marker = "BASEOS_RG353PS_TEST_DISABLE_PHY_POWER_CHANGE_DELAY"
 if marker not in text:
     # The fcc00000.usb controller is declared in the included rk356x base DTSI
     # with label usb_host0_xhci; this is the actual DWC3 controller on RK3566.
@@ -1225,19 +1370,21 @@ if marker not in text:
 	snps,dis-u2-freeclk-exists-quirk;
 	snps,dis_u2_susphy_quirk;
 	snps,dis-tx-ipgap-linecheck-quirk;
+	snps,dis-del-phy-power-chg-quirk;
 };
 
-/* BASEOS_RG353PS_TEST_DISABLE_TX_IPGAP_LINECHECK */
+/* BASEOS_RG353PS_TEST_DISABLE_PHY_POWER_CHANGE_DELAY */
 """
     text = text.rstrip() + "\n" + addition
 source.write_text(text)
 for prop in ("snps,dis_enblslpm_quirk;", "snps,dis-u2-freeclk-exists-quirk;",
-             "snps,dis_u2_susphy_quirk;", "snps,dis-tx-ipgap-linecheck-quirk;"):
+             "snps,dis_u2_susphy_quirk;", "snps,dis-tx-ipgap-linecheck-quirk;",
+             "snps,dis-del-phy-power-chg-quirk;"):
     if prop not in text:
         raise SystemExit("Failed to apply RG353PS High-Speed PHY quirk: " + prop)
 if marker not in text or "&usb_host0_xhci {" not in text:
     raise SystemExit("RG353PS DWC3 node override is missing")
-print("Applied RG353PS High-Speed v11 test: add TX IPGAP line-state-check quirk to v10 PHY settings")
+print("Applied RG353PS High-Speed v12 test: add PHY power-change delay quirk to v11 PHY settings")
 PYCODE
 
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.
