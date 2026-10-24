@@ -1216,8 +1216,8 @@ text = source.read_text()
 
 # Store the current logged SCSI sequence on fsg_common so each request can
 # copy it into the individual buffer head before queueing.
-common_marker = "\tu32 tag;\n\tu32 residue;"
-common_new = "\tu32 tag;\n\tu32 rg353ps_storage_seq_current;\n\tu32 residue;"
+common_marker = "\tunsigned int fsg_num_buffers;"
+common_new = "\tunsigned int fsg_num_buffers;\n\tu32 rg353ps_storage_seq_current;"
 common_count = text.count(common_marker)
 if common_count == 1:
     text = text.replace(common_marker, common_new, 1)
