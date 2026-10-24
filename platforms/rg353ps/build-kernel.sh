@@ -1855,7 +1855,7 @@ reset_marker = "baseos-msdiag: FSG request-reuse-reset v18"
 if reset_marker not in func:
     reset_code = (
         "\tif (bh->outreq->actual != 0 || bh->outreq->status != 0)\n"
-        "\t\tpr_info(\"baseos-msdiag: FSG request-reuse-reset v18 path=%u seq=%u tag=%u req=%p old_actual=%u old_status=%d len=%u intended=%u\\n\",\n"
+        "\t\tpr_info(\"baseos-msdiag: FSG request-reuse-reset v18 path=%u seq=%u tag=%u req=%p old_actual=%u old_status=%d len=%u intended=%u\\\\n\",\n"
         "\t\t\tbh->rg353ps_out_path, bh->rg353ps_out_seq, bh->rg353ps_out_tag,\n"
         "\t\t\tbh->outreq, bh->outreq->actual, bh->outreq->status,\n"
         "\t\t\tbh->outreq->length, bh->bulk_out_intended_length);\n"
