@@ -16,6 +16,7 @@ LAST_SCSI_START_SEQ=0
 LAST_SCSI_FINISH_SEQ=0
 LAST_EP0_SETUPS=
 LAST_WRITE_SECTORS=
+hb_write_sectors=
 NO_WRITE_PROGRESS_SECONDS=0
 LAST_STALL_DIAG_SECONDS=0
 CONFIGFS=/sys/kernel/config
@@ -251,7 +252,9 @@ diagnose_usb_state_change() {
   fi
 }
 cleanup() {
+  cleanup_status=$?
   trap - EXIT INT TERM HUP
+  log "cleanup entry trigger=${CLEANUP_TRIGGER:-EXIT} status=$cleanup_status elapsed_i=${i:-unset} bound=$BOUND"
   snapshot "cleanup-before-unbind"
   if [ -n "$UDC" ] && [ -e "$G/UDC" ]; then printf '\n' > "$G/UDC" 2>/dev/null || :; fi
   if [ -n "$PROMPT_PID" ]; then kill "$PROMPT_PID" 2>/dev/null || :; wait "$PROMPT_PID" 2>/dev/null || :; fi
@@ -285,12 +288,16 @@ cleanup() {
   rm -f "$ACTIVE" "$REQUEST" "$PAUSED"
   log "storage mode ended; diagnostic log saved when data partition was mounted"
 }
-trap cleanup EXIT INT TERM HUP
+CLEANUP_TRIGGER=EXIT
+trap 'CLEANUP_TRIGGER=INT; exit 130' INT
+trap 'CLEANUP_TRIGGER=TERM; exit 143' TERM
+trap 'CLEANUP_TRIGGER=HUP; exit 129' HUP
+trap cleanup EXIT
 
 [ ! -e "$ACTIVE" ] || exit 1
 : > "$ACTIVE"
 HELPER_CKSUM="$(cksum "$0" 2>/dev/null | awk '{print $1 ":" $2}')"
-log "helper_revision=usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v19 cksum=$HELPER_CKSUM"
+log "helper_revision=usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v20 cksum=$HELPER_CKSUM"
 # Prefer the removable frontend card (usually the left TF slot). If absent,
 # export only the dedicated BASEOS_DATA partition, never the boot/root system.
 if is_mounted /mnt/TF2; then
@@ -360,7 +367,7 @@ if [ "$GADGET_MAX_SPEED" != "high-speed" ]; then
   log "ERROR: high-speed setting readback failed (max_speed=$GADGET_MAX_SPEED); aborting test"
   exit 1
 fi
-log "diagnostic v19: gadget max_speed=$GADGET_MAX_SPEED; PHY/GUCTL1, 16 KiB buffer and nofua unchanged; standard UDC request initialization and upstream DISCARD recovery; WRITE OUT-wait/backing-write-enter tracing; corrected session-scoped watchdog"
+log "diagnostic v20: gadget max_speed=$GADGET_MAX_SPEED; PHY/GUCTL1, 16 KiB buffer and nofua unchanged; standard UDC request initialization and upstream DISCARD recovery; WRITE OUT-wait/backing-write-enter tracing; corrected session-scoped watchdog"
 printf 'BaseOS' > "$G/strings/0x409/manufacturer" 2>/dev/null || :
 printf 'RG353PS USB Storage' > "$G/strings/0x409/product" 2>/dev/null || :
 printf 'storage' > "$G/configs/b.1/strings/0x409/configuration" 2>/dev/null || :
@@ -428,13 +435,13 @@ while [ "$i" -lt 3600 ]; do
     fi
     log "transfer heartbeat elapsed=$i seconds udc_state=$hb_state speed=$hb_speed data_cable=$hb_cable"
     hb_disk="$(grep -E ' mmcblk0(p[0-9]+)? ' /proc/diskstats 2>/dev/null | tr '\n' ';')"
+    hb_write_sectors="$(awk '$3 == "mmcblk0p3" {print $10; exit}' /proc/diskstats 2>/dev/null)"
     hb_write_delta=unknown
     case "$SESSION_WRITE_SECTORS:$hb_write_sectors" in
       *[!0-9:]*|:*|*:) ;;
       *) hb_write_delta=$((hb_write_sectors - SESSION_WRITE_SECTORS)) ;;
     esac
     [ -z "$hb_disk" ] || log "diskstats $hb_disk session_write_sectors_delta=$hb_write_delta"
-    hb_write_sectors="$(awk '$3 == "mmcblk0p3" {print $10; exit}' /proc/diskstats 2>/dev/null)"
     hb_uptime="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
     # Preserve new SCSI entries by their monotonically increasing command
     # sequence number. A fixed dmesg tail can miss the WRITE that stalled if
