@@ -1353,9 +1353,9 @@ source.write_text(text)
 print("Applied per-request Bulk-OUT ownership and SCSI/CSW tag correlation diagnostics")
 PYCODE
 
-      # High-Speed A/B test v12: the v11 TX IPGAP linecheck setting did not stop stalls.
-      # Add only the PHY power-change delay quirk from the RK3566 DWC3 workaround set.
-      # Keep USB speed, request queueing, FSG buffer and noFUA behavior unchanged.
+      # High-Speed diagnostic v13: the v12 power-change property targets GUSB3PIPECTL (SuperSpeed).
+      # Keep only the tested USB2 PHY and GUCTL1 settings; improve EP2 event/request visibility.
+      # Do not change speed, request queueing, FSG buffer, or noFUA behavior.
       python3 - <<PYCODE
 from pathlib import Path
 
@@ -1363,7 +1363,7 @@ source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
 if not source.is_file():
     raise SystemExit("Could not locate RG353PS device tree for High-Speed PHY test")
 text = source.read_text()
-marker = "BASEOS_RG353PS_TEST_DISABLE_PHY_POWER_CHANGE_DELAY"
+marker = "BASEOS_RG353PS_TEST_DWC3_EP2_EVENTTRACE_V13"
 if marker not in text:
     # The fcc00000.usb controller is declared in the included rk356x base DTSI
     # with label usb_host0_xhci; this is the actual DWC3 controller on RK3566.
@@ -1373,21 +1373,19 @@ if marker not in text:
 	snps,dis-u2-freeclk-exists-quirk;
 	snps,dis_u2_susphy_quirk;
 	snps,dis-tx-ipgap-linecheck-quirk;
-	snps,dis-del-phy-power-chg-quirk;
 };
 
-/* BASEOS_RG353PS_TEST_DISABLE_PHY_POWER_CHANGE_DELAY */
+/* BASEOS_RG353PS_TEST_DWC3_EP2_EVENTTRACE_V13 */
 """
     text = text.rstrip() + "\n" + addition
 source.write_text(text)
 for prop in ("snps,dis_enblslpm_quirk;", "snps,dis-u2-freeclk-exists-quirk;",
-             "snps,dis_u2_susphy_quirk;", "snps,dis-tx-ipgap-linecheck-quirk;",
-             "snps,dis-del-phy-power-chg-quirk;"):
+             "snps,dis_u2_susphy_quirk;", "snps,dis-tx-ipgap-linecheck-quirk;"):
     if prop not in text:
         raise SystemExit("Failed to apply RG353PS High-Speed PHY quirk: " + prop)
 if marker not in text or "&usb_host0_xhci {" not in text:
     raise SystemExit("RG353PS DWC3 node override is missing")
-print("Applied RG353PS High-Speed v12 test: add PHY power-change delay quirk to v11 PHY settings")
+print("Applied RG353PS USB2 High-Speed v13 diagnostics: retained USB2/GUCTL1 PHY settings and added EP2 event tracing")
 PYCODE
 
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.
