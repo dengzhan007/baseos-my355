@@ -991,8 +991,55 @@ if device_event_marker not in text:
     event_diag = "\n".join(event_lines) + "\n"
     text = text[:event_match.end()] + "\n" + event_diag + text[event_match.end():]
 
+# v14: trace every raw EP2 endpoint event before the normal event dispatcher.
+# v13 rate-limited non-terminal events and only logged selected event types.
+entry_start = text.index("static void dwc3_process_event_entry(")
+entry_end = text.find("\n}\n", entry_start)
+if entry_start < 0 or entry_end < 0:
+    raise SystemExit("Could not locate DWC3 raw event entry dispatcher")
+entry_func = text[entry_start:entry_end + 3]
+raw_marker = "RG353PS EP2 raw-event"
+if raw_marker not in entry_func:
+    anchor = "\ttrace_dwc3_event(event->raw, dwc);"
+    raw_diag = (
+        anchor + "\n"
+        "\tif (!event->type.is_devspec && event->depevt.endpoint_number == 2) {\n"
+        "\t\tstruct dwc3_ep *out = dwc->eps[2];\n"
+        "\t\tstruct dwc3_request *req = NULL;\n"
+        "\t\tstruct dwc3_trb *trb = NULL;\n"
+        "\t\tif (out) {\n"
+        "\t\t\treq = list_first_entry_or_null(&out->started_list, struct dwc3_request, list);\n"
+        "\t\t\tif (req)\n"
+        "\t\t\t\ttrb = req->trb;\n"
+        "\t\t}\n"
+        "\t\tdev_info(dwc->dev,\n"
+        "\t\t\t\"RG353PS EP2 raw-event raw=%08x epnum=%u event=%u status=%u params=%08x flags=%08x resource=%u enq=%u deq=%u started_empty=%u pending_empty=%u req=%p req_status=%d req_len=%u req_actual=%u remaining=%u num_trbs=%u trb_dma=%llx trb_bpl=%08x trb_bph=%08x trb_size=%08x trb_ctrl=%08x ev_count=%u ev_lpos=%u GEVNTCOUNT=%08x DCTL=%08x DSTS=%08x GUSB2PHYCFG=%08x GUCTL1=%08x\\\\n\",\n"
+        "\t\t\tevent->raw, event->depevt.endpoint_number, event->depevt.endpoint_event,\n"
+        "\t\t\tevent->depevt.status, event->depevt.parameters,\n"
+        "\t\t\tout ? out->flags : 0, out ? out->resource_index : 0,\n"
+        "\t\t\tout ? out->trb_enqueue : 0, out ? out->trb_dequeue : 0,\n"
+        "\t\t\tout ? list_empty(&out->started_list) : 1,\n"
+        "\t\t\tout ? list_empty(&out->pending_list) : 1, req,\n"
+        "\t\t\treq ? req->status : -1, req ? req->request.length : 0,\n"
+        "\t\t\treq ? req->request.actual : 0, req ? req->remaining : 0,\n"
+        "\t\t\treq ? req->num_trbs : 0, req ? (unsigned long long)req->trb_dma : 0ULL,\n"
+        "\t\t\ttrb ? le32_to_cpu(trb->bpl) : 0, trb ? le32_to_cpu(trb->bph) : 0,\n"
+        "\t\t\ttrb ? le32_to_cpu(trb->size) : 0, trb ? le32_to_cpu(trb->ctrl) : 0,\n"
+        "\t\t\tdwc->ev_buf ? dwc->ev_buf->count : 0,\n"
+        "\t\t\tdwc->ev_buf ? dwc->ev_buf->lpos : 0,\n"
+        "\t\t\tdwc3_readl(dwc, DWC3_GEVNTCOUNT(0)),\n"
+        "\t\t\tdwc3_readl(dwc, DWC3_DCTL), dwc3_readl(dwc, DWC3_DSTS),\n"
+        "\t\t\tdwc3_readl(dwc, DWC3_GUSB2PHYCFG(0)), dwc3_readl(dwc, DWC3_GUCTL1));\n"
+        "\t}\n"
+    )
+    if entry_func.count(anchor) != 1:
+        raise SystemExit("Could not uniquely locate raw DWC3 event entry anchor")
+    entry_func = entry_func.replace(anchor, raw_diag, 1)
+    text = text[:entry_start] + entry_func + text[entry_end + 3:]
+
+# Ensure the new raw-event trace is applied before persisting the source.
 source.write_text(text)
-print("Applied RG353PS DWC3 bulk-OUT event, device-state and reset diagnostics")
+print("Applied RG353PS DWC3 raw EP2 event tracing v14")
 PYCODE
 
       # Add checked diagnostics to the existing USB mass-storage function. These
@@ -1381,7 +1428,7 @@ source.write_text(text)
 print("Applied per-request Bulk-OUT ownership and SCSI/CSW tag correlation diagnostics")
 PYCODE
 
-      # High-Speed diagnostic v13: the v12 power-change property targets GUSB3PIPECTL (SuperSpeed).
+      # High-Speed diagnostic v14: the v12 power-change property targets GUSB3PIPECTL (SuperSpeed).
       # Keep only the tested USB2 PHY and GUCTL1 settings; improve EP2 event/request visibility.
       # Do not change speed, request queueing, FSG buffer, or noFUA behavior.
       python3 - <<PYCODE
@@ -1413,7 +1460,7 @@ for prop in ("snps,dis_enblslpm_quirk;", "snps,dis-u2-freeclk-exists-quirk;",
         raise SystemExit("Failed to apply RG353PS High-Speed PHY quirk: " + prop)
 if marker not in text or "&usb_host0_xhci {" not in text:
     raise SystemExit("RG353PS DWC3 node override is missing")
-print("Applied RG353PS USB2 High-Speed v13 diagnostics: retained USB2/GUCTL1 PHY settings and added EP2 event tracing")
+print("Applied RG353PS USB2 High-Speed v14 diagnostics: retained USB2/GUCTL1 PHY settings and added raw EP2 event tracing")
 PYCODE
 
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.

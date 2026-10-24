@@ -290,7 +290,7 @@ trap cleanup EXIT INT TERM HUP
 [ ! -e "$ACTIVE" ] || exit 1
 : > "$ACTIVE"
 HELPER_CKSUM="$(cksum "$0" 2>/dev/null | awk '{print $1 ":" $2}')"
-log "helper_revision=usb-high-speed-dwc3-ep2-eventtrace-ab-v13 cksum=$HELPER_CKSUM"
+log "helper_revision=usb-high-speed-dwc3-ep2-rawevent-ab-v14 cksum=$HELPER_CKSUM"
 # Prefer the removable frontend card (usually the left TF slot). If absent,
 # export only the dedicated BASEOS_DATA partition, never the boot/root system.
 if is_mounted /mnt/TF2; then
