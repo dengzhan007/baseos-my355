@@ -1219,8 +1219,8 @@ text = source.read_text()
 common_start = text.index("struct fsg_common {")
 common_end = text.index("\n};", common_start)
 common = text[common_start:common_end]
-common_marker = re.compile(r"(?m)^([ \\t]*u32[ \\t]+tag;[ \\t]*)$")
-common_new = r"\\1\\n\\tu32 rg353ps_storage_seq_current;"
+common_marker = re.compile(r"(?m)^([ \t]*u32[ \t]+tag;[ \t]*)$")
+common_new = r"\1\n\tu32 rg353ps_storage_seq_current;"
 common_text, common_count = common_marker.subn(common_new, common, count=1)
 if common_count == 1:
     text = text[:common_start] + common_text + text[common_end:]
