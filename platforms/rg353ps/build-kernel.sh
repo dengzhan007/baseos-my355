@@ -1943,7 +1943,80 @@ dwc_source.write_text(dwc_text)
 print("Applied v18 DWC3 EP2 endpoint-command completion diagnostics")
 PYCODE
 
-      # cfg80211 is built into this kernel and can request the regdb before
+            # High-Speed diagnostic v19: preserve normal request lifecycle and distinguish USB wait from backing-write stalls.
+      python3 - <<PYCODE
+from pathlib import Path
+
+fsg_source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
+fsg_text = fsg_source.read_text()
+
+# A queued request is initialized by the UDC. Keep the old-state log, but do
+# not manually write the public usb_request fields before the queue operation.
+reset_pair = "\tbh->outreq->actual = 0;\n\tbh->outreq->status = -EINPROGRESS;\n"
+reset_count = fsg_text.count(reset_pair)
+if reset_count == 1:
+    fsg_text = fsg_text.replace(reset_pair, "", 1)
+elif reset_count != 0:
+    raise SystemExit("Unexpected count while removing v18 request-field writes: " + str(reset_count))
+fsg_text = fsg_text.replace(
+    "FSG request-reuse-reset v18",
+    "FSG request-reuse-state v19"
+)
+
+# The v18 short-DISCARD branch duplicated the upstream error check and changed
+# short_packet_received. Restore the upstream single recovery path.
+guard_marker = "baseos-msdiag: FSG DISCARD short-packet abort v18"
+if guard_marker in fsg_text:
+    marker_pos = fsg_text.index(guard_marker)
+    guard_start = fsg_text.rfind("\t\tif (bh->outreq->status == 0 &&", 0, marker_pos)
+    guard_end_marker = "\t\t\treturn -EINTR;\n\t\t}"
+    guard_end = fsg_text.find(guard_end_marker, marker_pos)
+    if guard_start < 0 or guard_end < 0:
+        raise SystemExit("Could not safely remove the redundant v18 short-DISCARD branch")
+    fsg_text = fsg_text[:guard_start] + fsg_text[guard_end + len(guard_end_marker):]
+
+# Report the exact point at which a WRITE is blocked waiting for Bulk-OUT.
+start = fsg_text.index("static int do_write(struct fsg_common *common)")
+end = fsg_text.index("static int do_synchronize_cache(", start)
+func = fsg_text[start:end]
+wait_marker = "RG353PS FSG WRITE wait-OUT v19"
+if wait_marker not in func:
+    wait_anchor = "\t\trc = sleep_thread(common, false, bh);"
+    wait_diag = r"""
+		pr_info("baseos-msdiag: RG353PS FSG WRITE wait-OUT v19 seq=%u tag=%u lba=%llu amount_left_req=%u amount_left_write=%u bh=%p bh_state=%d req=%p req_status=%d req_actual=%u intended=%u\\n",
+			common->rg353ps_storage_seq_current, common->tag,
+			(unsigned long long)lba, amount_left_to_req,
+			amount_left_to_write, bh, bh->state, bh->outreq,
+			bh->outreq->status, bh->outreq->actual,
+			bh->bulk_out_intended_length);
+"""
+    if func.count(wait_anchor) != 1:
+        raise SystemExit("Could not uniquely locate the WRITE Bulk-OUT wait: " + str(func.count(wait_anchor)))
+    func = func.replace(wait_anchor, wait_diag + wait_anchor, 1)
+
+# Report entry to kernel_write, not only its return. If enter has no matching
+# backing-result, that localizes the stall to the backing filesystem/block path.
+backing_marker = "RG353PS FSG WRITE backing-enter v19"
+if backing_marker not in func:
+    write_anchor = "\t\trg353ps_write_started = jiffies;\n\t\tnwritten = kernel_write(curlun->filp, bh->buf, amount,"
+    backing_diag = r"""
+		pr_info("baseos-msdiag: RG353PS FSG WRITE backing-enter v19 seq=%u tag=%u lba=%llu amount=%u file_offset=%llu bh=%p bh_state=%d req=%p req_status=%d req_actual=%u intended=%u\\n",
+			common->rg353ps_storage_seq_current, common->tag,
+			(unsigned long long)lba, amount,
+			(unsigned long long)file_offset, bh, bh->state,
+			bh->outreq, bh->outreq->status, bh->outreq->actual,
+			bh->bulk_out_intended_length);
+"""
+    if func.count(write_anchor) != 1:
+        raise SystemExit("Could not uniquely locate the kernel_write timing anchor: " + str(func.count(write_anchor)))
+    func = func.replace(write_anchor, backing_diag + write_anchor, 1)
+
+fsg_text = fsg_text[:start] + func + fsg_text[end:]
+fsg_source.write_text(fsg_text)
+print("Applied v19 WRITE-stage tracing and restored standard request/short-discard handling")
+PYCODE
+
+# cfg80211 is built into this kernel and can request the regdb before
       # the SD root partition is available. Embed both files in the kernel.
       test -s /regdb-fw/regulatory.db
       test -s /regdb-fw/regulatory.db.p7s
@@ -2043,7 +2116,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
-  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-short-discard-abort-epcmd-v18",
+  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v19",
   "complete_sd_image": false,
   "hardware_tested": false
 }
