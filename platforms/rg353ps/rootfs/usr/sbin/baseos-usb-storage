@@ -430,7 +430,7 @@ while [ "$i" -lt 3600 ]; do
     hb_disk="$(grep -E ' mmcblk0(p[0-9]+)? ' /proc/diskstats 2>/dev/null | tr '\n' ';')"
     hb_write_delta=unknown
     case "$SESSION_WRITE_SECTORS:$hb_write_sectors" in
-      *[!0-9:]*|:*) ;;
+      *[!0-9:]*|:*|*:) ;;
       *) hb_write_delta=$((hb_write_sectors - SESSION_WRITE_SECTORS)) ;;
     esac
     [ -z "$hb_disk" ] || log "diskstats $hb_disk session_write_sectors_delta=$hb_write_delta"
@@ -500,7 +500,7 @@ while [ "$i" -lt 3600 ]; do
     hb_pending_scsi="$(dmesg 2>/dev/null | awk -v now="$hb_uptime" -v session_start="$KERNEL_ERR_START_SEC" '
       # The helper mirrors these records into /dev/kmsg, creating nested
       # duplicate SCSI lines. Exclude wrappers so age/oldest use kernel timestamps.
-      /baseos-usb-storage: SCSI command diagnostic:/ { next }
+      /baseos-usb-storage:/ { next }
       /baseos-msdiag: SCSI start seq=/ {
         if (!match($0, /SCSI start seq=[0-9]+/)) next
         seq = substr($0, RSTART, RLENGTH)
