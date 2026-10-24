@@ -1205,7 +1205,7 @@ source.write_text(text)
 print("Applied RG353PS WRITE(10) Bulk-OUT queue/completion diagnostics")
 PYCODE
 
-      # High-Speed A/B test v11: v10's ENBLSLPM, U2_FREECLK_EXISTS, and SUSPHY
+      # High-Speed A/B test v11: the v10 ENBLSLPM, U2_FREECLK_EXISTS, and SUSPHY
       # settings did not stop the Bulk-OUT stall. Add only the TX IPGAP line-state
       # check quirk for this run; keep request queueing and all other settings fixed.
       python3 - <<PYCODE
