@@ -1204,9 +1204,9 @@ source.write_text(text)
 print("Applied RG353PS WRITE(10) Bulk-OUT queue/completion diagnostics")
 PYCODE
 
-      # High-Speed A/B test: ENBLSLPM alone did not fix the stall. Keep that
-      # bit disabled and also clear U2_FREECLK_EXISTS to test whether the
-      # controller is incorrectly assuming a free-running USB2 PHY clock.
+      # High-Speed A/B test: clearing ENBLSLPM and U2_FREECLK_EXISTS did not
+      # stop the Bulk-OUT stall. Also keep SUSPHY disabled across role and
+      # power-state transitions, a compatibility quirk used on RK356x DWC3.
       python3 - <<PYCODE
 from pathlib import Path
 
@@ -1214,7 +1214,7 @@ source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
 if not source.is_file():
     raise SystemExit("Could not locate RG353PS device tree for High-Speed PHY test")
 text = source.read_text()
-marker = "BASEOS_RG353PS_TEST_DISABLE_U2_FREECLK_EXISTS"
+marker = "BASEOS_RG353PS_TEST_DISABLE_U2_SUSPHY"
 if marker not in text:
     # The fcc00000.usb controller is declared in the included rk356x base DTSI
     # with label usb_host0_xhci; this is the actual DWC3 controller on RK3566.
@@ -1222,18 +1222,20 @@ if marker not in text:
 &usb_host0_xhci {
 	snps,dis_enblslpm_quirk;
 	snps,dis-u2-freeclk-exists-quirk;
+	snps,dis_u2_susphy_quirk;
 };
 
-/* BASEOS_RG353PS_TEST_DISABLE_U2_FREECLK_EXISTS */
+/* BASEOS_RG353PS_TEST_DISABLE_U2_SUSPHY */
 """
     text = text.rstrip() + "\n" + addition
 source.write_text(text)
-for prop in ("snps,dis_enblslpm_quirk;", "snps,dis-u2-freeclk-exists-quirk;"):
+for prop in ("snps,dis_enblslpm_quirk;", "snps,dis-u2-freeclk-exists-quirk;",
+             "snps,dis_u2_susphy_quirk;"):
     if prop not in text:
         raise SystemExit("Failed to apply RG353PS High-Speed PHY quirk: " + prop)
 if marker not in text or "&usb_host0_xhci {" not in text:
     raise SystemExit("RG353PS DWC3 node override is missing")
-print("Applied RG353PS High-Speed test: clear ENBLSLPM and U2_FREECLK_EXISTS")
+print("Applied RG353PS High-Speed test: clear ENBLSLPM, U2_FREECLK_EXISTS, and SUSPHY")
 PYCODE
 
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.
