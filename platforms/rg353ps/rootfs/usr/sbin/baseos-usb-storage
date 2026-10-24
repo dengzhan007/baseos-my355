@@ -399,7 +399,8 @@ grep -q " /sys/kernel/debug " /proc/mounts 2>/dev/null ||
 sleep 1
 rk3566_usb_trigger || :
 snapshot "one-second-after-bind"
-log "USB mass storage active for $DEVICE; unplug cable to return to BaseOS"
+SESSION_WRITE_SECTORS="$(awk '$3 == "mmcblk0p3" {print $10; exit}' /proc/diskstats 2>/dev/null)"
+log "USB mass storage active for $DEVICE; session-start sectors_written_baseline=${SESSION_WRITE_SECTORS:-unknown}; unplug cable to return to BaseOS"
 
 # A controller that never leaves "not attached" cannot reliably detect
 # cable removal. Do not leave the data partition unmounted indefinitely:
@@ -427,7 +428,12 @@ while [ "$i" -lt 3600 ]; do
     fi
     log "transfer heartbeat elapsed=$i seconds udc_state=$hb_state speed=$hb_speed data_cable=$hb_cable"
     hb_disk="$(grep -E ' mmcblk0(p[0-9]+)? ' /proc/diskstats 2>/dev/null | tr '\n' ';')"
-    [ -z "$hb_disk" ] || log "diskstats $hb_disk"
+    hb_write_delta=unknown
+    case "$SESSION_WRITE_SECTORS:$hb_write_sectors" in
+      *[!0-9:]*|:*) ;;
+      *) hb_write_delta=$((hb_write_sectors - SESSION_WRITE_SECTORS)) ;;
+    esac
+    [ -z "$hb_disk" ] || log "diskstats $hb_disk session_write_sectors_delta=$hb_write_delta"
     hb_write_sectors="$(awk '$3 == "mmcblk0p3" {print $10; exit}' /proc/diskstats 2>/dev/null)"
     hb_uptime="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
     # Preserve new SCSI entries by their monotonically increasing command
@@ -492,6 +498,9 @@ while [ "$i" -lt 3600 ]; do
     # Detect a stuck host-to-device WRITE, not an idle storage session. A
     # pending SCSI WRITE with no mmcblk0p3 sector progress is the useful trigger.
     hb_pending_scsi="$(dmesg 2>/dev/null | awk -v now="$hb_uptime" -v session_start="$KERNEL_ERR_START_SEC" '
+      # The helper mirrors these records into /dev/kmsg, creating nested
+      # duplicate SCSI lines. Exclude wrappers so age/oldest use kernel timestamps.
+      /baseos-usb-storage: SCSI command diagnostic:/ { next }
       /baseos-msdiag: SCSI start seq=/ {
         if (!match($0, /SCSI start seq=[0-9]+/)) next
         seq = substr($0, RSTART, RLENGTH)
