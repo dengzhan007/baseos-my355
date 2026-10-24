@@ -1629,12 +1629,12 @@ func = func.replace(needle, needle + "\n\tif (bh->rg353ps_out_is_cbw)\n\t\tbh->r
 text = text[:start] + func + text[end:]
 
 replacements = [
-    ('BULK OUT owner kind=CBW req=%p', 'BULK OUT owner kind=CBW path=%u req=%p'),
-    ('BULK OUT mismatch kind=CBW req=%p', 'BULK OUT mismatch kind=CBW path=%u req=%p'),
-    ('BULK OUT complete kind=CBW req=%p', 'BULK OUT complete kind=CBW path=%u req=%p'),
-    ('BULK OUT owner kind=DATA seq=%u', 'BULK OUT owner kind=DATA path=%u seq=%u'),
-    ('BULK OUT mismatch kind=DATA seq=%u', 'BULK OUT mismatch kind=DATA path=%u seq=%u'),
-    ('BULK OUT complete kind=DATA seq=%u', 'BULK OUT complete kind=DATA path=%u seq=%u'),
+    ("BULK OUT owner kind=CBW req=%p", "BULK OUT owner kind=CBW path=%u req=%p"),
+    ("BULK OUT mismatch kind=CBW req=%p", "BULK OUT mismatch kind=CBW path=%u req=%p"),
+    ("BULK OUT complete kind=CBW req=%p", "BULK OUT complete kind=CBW path=%u req=%p"),
+    ("BULK OUT owner kind=DATA seq=%u", "BULK OUT owner kind=DATA path=%u seq=%u"),
+    ("BULK OUT mismatch kind=DATA seq=%u", "BULK OUT mismatch kind=DATA path=%u seq=%u"),
+    ("BULK OUT complete kind=DATA seq=%u", "BULK OUT complete kind=DATA path=%u seq=%u"),
 ]
 for old, new in replacements:
     if text.count(old) < 1:
