@@ -543,7 +543,7 @@ while [ "$i" -lt 3600 ]; do
           }
         }
         if (count)
-          printf "pending_count=%d oldest_age=%.1fs oldest=%s", count, oldest_age, oldest
+          printf "pending_scsi_count=%d oldest_scsi_age=%.1fs oldest_scsi_start=%s", count, oldest_age, oldest
       }
     ')"
 
