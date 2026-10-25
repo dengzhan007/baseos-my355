@@ -2089,7 +2089,7 @@ PYCODE
       printf "%s\n" "$INPUT_KEY" > "$SRC/.baseos-rg353ps-input-key"
     fi
 
-      # High-Speed diagnostic v26: end each non-streaming EP2 Bulk-OUT request
+      # High-Speed diagnostic v26: end each 512-byte EP2 Bulk-OUT request
       # at its TRB boundary. This forces the next chunk to use STARTTRANSFER
       # rather than repeatedly extending the long-lived resource with UPDATETRANSFER.
       python3 - <<PYCODE
@@ -2113,7 +2113,7 @@ if marker not in text:
 \t/* BASEOS_RG353PS_EP2_BULK_OUT_LST_PER_REQUEST_V26 */
 \tif (dep->number == 2 &&
 \t    usb_endpoint_dir_out(dep->endpoint.desc) &&
-\t    !dep->stream_capable && !chain)
+\t    !dep->stream_capable && length == 512 && !chain)
 \t\ttrb->ctrl |= DWC3_TRB_CTRL_LST;
 """
     text = text.replace(anchor, replacement, 1)
