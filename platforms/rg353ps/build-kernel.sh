@@ -2089,6 +2089,40 @@ PYCODE
       printf "%s\n" "$INPUT_KEY" > "$SRC/.baseos-rg353ps-input-key"
     fi
 
+      # High-Speed diagnostic v26: end each non-streaming EP2 Bulk-OUT request
+      # at its TRB boundary. This forces the next chunk to use STARTTRANSFER
+      # rather than repeatedly extending the long-lived resource with UPDATETRANSFER.
+      python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/drivers/usb/dwc3/gadget.c")
+if not source.is_file():
+    raise SystemExit("Could not locate DWC3 gadget source for v26 EP2 OUT restart test")
+text = source.read_text()
+marker = "BASEOS_RG353PS_EP2_BULK_OUT_LST_PER_REQUEST_V26"
+if marker not in text:
+    anchor = """\tif (chain)
+\t\ttrb->ctrl |= DWC3_TRB_CTRL_CHN;
+\telse if (dep->stream_capable && is_last &&
+\t\t !DWC3_MST_CAPABLE(&dwc->hwparams))
+\t\ttrb->ctrl |= DWC3_TRB_CTRL_LST;
+"""
+    if text.count(anchor) != 1:
+        raise SystemExit("Could not uniquely locate DWC3 TRB chain/LST setup for v26")
+    replacement = anchor + """
+\t/* BASEOS_RG353PS_EP2_BULK_OUT_LST_PER_REQUEST_V26 */
+\tif (dep->number == 2 &&
+\t    usb_endpoint_dir_out(dep->endpoint.desc) &&
+\t    !dep->stream_capable && !chain)
+\t\ttrb->ctrl |= DWC3_TRB_CTRL_LST;
+"""
+    text = text.replace(anchor, replacement, 1)
+    source.write_text(text)
+if marker not in text:
+    raise SystemExit("DWC3 v26 EP2 Bulk-OUT LST marker is missing")
+print("Applied RG353PS v26: each EP2 Bulk-OUT request terminates its transfer")
+PYCODE
+
     cd "$SRC"
     export ARCH=arm64 CROSS_COMPILE="$CROSS" SOURCE_DATE_EPOCH=0
     export KBUILD_BUILD_USER=baseos KBUILD_BUILD_HOST=rg353ps
@@ -2138,7 +2172,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
-  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v25-default-phy-512",
+  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v26-out-lst-restart-512",
   "complete_sd_image": false,
   "hardware_tested": false
 }
