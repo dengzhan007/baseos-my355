@@ -1480,7 +1480,7 @@ def patch_do_write(func):
     # Fail the build if a future edit reintroduces the 512-byte chunk cap or
     # single-request serialization. The upstream FSG buffer/pipeline is the
     # baseline for this diagnostic revision.
-    if "\\tamount = min(amount_left_to_req, FSG_BUFLEN);" not in func:
+    if "\tamount = min(amount_left_to_req, FSG_BUFLEN);" not in func:
         raise SystemExit("Upstream FSG WRITE buffer-sized chunk calculation is missing")
     if "amount = min(amount, 512U);" in func:
         raise SystemExit("Unexpected 512-byte WRITE request cap remains")
