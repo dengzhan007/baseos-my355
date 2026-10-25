@@ -2144,10 +2144,10 @@ if marker not in text:
 \t    usb_endpoint_dir_out(dep->endpoint.desc) && !dep->stream_capable &&
 \t    event->endpoint_event == DWC3_DEPEVT_XFERINPROGRESS && !status &&
 \t    list_empty(&dep->started_list) && list_empty(&dep->pending_list)) {
-\t\tpr_info("dwc3 %s: RG353PS v28 ending idle EP2 OUT transfer after XferInProgress resource=%u flags=%08x\\n",
+\t\tpr_info("dwc3 %s: RG353PS v28 ending idle EP2 OUT transfer after XferInProgress resource=%u flags=%08x\\\\n",
 \t\t\tdev_name(dwc->dev), dep->resource_index, dep->flags);
 \t\tdwc3_stop_active_transfer(dep, true, true);
-\t\tpr_info("dwc3 %s: RG353PS v28 EP2 OUT restart state flags=%08x resource=%u\\n",
+\t\tpr_info("dwc3 %s: RG353PS v28 EP2 OUT restart state flags=%08x resource=%u\\\\n",
 \t\t\tdev_name(dwc->dev), dep->flags, dep->resource_index);
 \t\tif (dep->flags & (DWC3_EP_END_TRANSFER_PENDING | DWC3_EP_DELAY_STOP))
 \t\t\tgoto out;
