@@ -1745,24 +1745,6 @@ if marker not in text or legacy_override in text:
     raise SystemExit("Could not restore upstream DWC3 USB2-PHY defaults for v25")
 print("Applied RG353PS v25: upstream DWC3 USB2-PHY defaults; EP2/TRB diagnostics retained")
 PYCODE
-from pathlib import Path
-
-source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
-if not source.is_file():
-    raise SystemExit("Could not locate RG353PS device tree for v25 USB2-PHY default test")
-text = source.read_text()
-marker = "BASEOS_RG353PS_TEST_DWC3_EP2_DEFAULT_PHY_V25"
-if marker not in text:
-    text = text.rstrip() + "\\n\\n/* " + marker + " */\\n"
-source.write_text(text)
-if marker not in text:
-    raise SystemExit("RG353PS v25 DWC3 PHY-default marker is missing")
-for prop in ("snps,dis_enblslpm_quirk;", "snps,dis-u2-freeclk-exists-quirk;",
-             "snps,dis_u2_susphy_quirk;", "snps,dis-tx-ipgap-linecheck-quirk;"):
-    if prop in text:
-        raise SystemExit("v25 unexpectedly retained a custom DWC3 USB2-PHY quirk: " + prop)
-print("Applied RG353PS v25: upstream DWC3 USB2-PHY defaults; EP2/TRB diagnostics retained")
-PYCODE
 
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.
       # Field tests showed that the 4 KiB buffer experiment did not stop the stall,
