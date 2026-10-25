@@ -297,7 +297,7 @@ trap cleanup EXIT
 [ ! -e "$ACTIVE" ] || exit 1
 : > "$ACTIVE"
 HELPER_CKSUM="$(cksum "$0" 2>/dev/null | awk '{print $1 ":" $2}')"
-log "helper_revision=usb-full-speed-dwc3-ep2-fsg-write-stage-watchdog-v24-single-out-512 cksum=$HELPER_CKSUM"
+log "helper_revision=usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v25-default-phy-512 cksum=$HELPER_CKSUM"
 # Prefer the removable frontend card (usually the left TF slot). If absent,
 # export only the dedicated BASEOS_DATA partition, never the boot/root system.
 if is_mounted /mnt/TF2; then
@@ -354,20 +354,19 @@ mkdir -p "$G/strings/0x409" "$G/configs/b.1/strings/0x409" "$G/functions/mass_st
 printf '0x2207' > "$G/idVendor" 2>/dev/null || :
 printf '0x0006' > "$G/idProduct" 2>/dev/null || :
 printf '0x0200' > "$G/bcdUSB" 2>/dev/null || :
-# Diagnostic A/B test: restore High-Speed while disabling the DWC3
-# ENBLSLPM suspend signal through a board-specific DT quirk. This checks
-# whether HS bulk-OUT stalls depend on the PHY low-power/suspend path.
+# v25 A/B: restore High-Speed and use upstream DWC3 USB2-PHY defaults; do not add the four experimental PHY quirks.
+# Keep the 16 KiB allocation, 512-byte serialized WRITE OUT requests, and nofua=1 unchanged.
 # Set speed before UDC binding and fail closed if the requested mode is not set.
-if [ ! -w "$G/max_speed" ] || ! printf 'full-speed' > "$G/max_speed" 2>/dev/null; then
-  log "ERROR: could not set diagnostic storage gadget to full-speed; aborting test"
+if [ ! -w "$G/max_speed" ] || ! printf 'high-speed' > "$G/max_speed" 2>/dev/null; then
+  log "ERROR: could not set diagnostic storage gadget to high-speed; aborting test"
   exit 1
 fi
 GADGET_MAX_SPEED=$(cat "$G/max_speed" 2>/dev/null || echo unknown)
-if [ "$GADGET_MAX_SPEED" != "full-speed" ]; then
-  log "ERROR: full-speed setting readback failed (max_speed=$GADGET_MAX_SPEED); aborting test"
+if [ "$GADGET_MAX_SPEED" != "high-speed" ]; then
+  log "ERROR: high-speed setting readback failed (max_speed=$GADGET_MAX_SPEED); aborting test"
   exit 1
 fi
-log "diagnostic v24 A/B: gadget max_speed=$GADGET_MAX_SPEED (Full-Speed); 16 KiB buffers, 512-byte serialized WRITE OUT requests, PHY/GUCTL1 and nofua unchanged; isolates USB bus-speed dependence of the stalled OUT requests"
+log "diagnostic v25 A/B: gadget max_speed=$GADGET_MAX_SPEED; 16 KiB buffers, 512-byte serialized WRITE OUT requests; upstream DWC3 USB2-PHY defaults (custom PHY quirks removed); GUCTL1/noFUA otherwise unchanged"
 printf 'BaseOS' > "$G/strings/0x409/manufacturer" 2>/dev/null || :
 printf 'RG353PS USB Storage' > "$G/strings/0x409/product" 2>/dev/null || :
 printf 'storage' > "$G/configs/b.1/strings/0x409/configuration" 2>/dev/null || :
