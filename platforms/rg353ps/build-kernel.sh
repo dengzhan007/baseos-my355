@@ -2113,7 +2113,7 @@ if marker not in text:
 \t/* BASEOS_RG353PS_EP2_BULK_OUT_LST_PER_REQUEST_V26 */
 \tif (dep->number == 2 &&
 \t    usb_endpoint_dir_out(dep->endpoint.desc) &&
-\t    !dep->stream_capable && length == 512 && !chain)
+\t    !dep->stream_capable && trb_length == 512 && !chain)
 \t\ttrb->ctrl |= DWC3_TRB_CTRL_LST;
 """
     text = text.replace(anchor, replacement, 1)
