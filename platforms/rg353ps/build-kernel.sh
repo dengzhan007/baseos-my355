@@ -1711,40 +1711,27 @@ source.write_text(text)
 print("Applied RG353PS v16 FSG WRITE-vs-DISCARD path diagnostics")
 PYCODE
 
-      # High-Speed diagnostic v16: retain PHY/speed/buffer settings; trace SCSI data path.
-      # The v12 power-change property targets GUSB3PIPECTL (SuperSpeed).
-      # Keep only the tested USB2 PHY and GUCTL1 settings; improve EP2 event/request visibility.
-      # Do not change speed, request queueing, FSG buffer, or noFUA behavior.
+      # High-Speed diagnostic v25: keep EP2 request/event tracing, but remove the
+      # four experimental DWC3 USB2-PHY quirks. This A/B test restores upstream
+      # PHY defaults while keeping v23's 512-byte serialized WRITE OUT requests.
       python3 - <<PYCODE
 from pathlib import Path
 
 source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
 if not source.is_file():
-    raise SystemExit("Could not locate RG353PS device tree for High-Speed PHY test")
+    raise SystemExit("Could not locate RG353PS device tree for v25 USB2-PHY default test")
 text = source.read_text()
-marker = "BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V16"
+marker = "BASEOS_RG353PS_TEST_DWC3_EP2_DEFAULT_PHY_V25"
 if marker not in text:
-    # The fcc00000.usb controller is declared in the included rk356x base DTSI
-    # with label usb_host0_xhci; this is the actual DWC3 controller on RK3566.
-    addition = """
-&usb_host0_xhci {
-	snps,dis_enblslpm_quirk;
-	snps,dis-u2-freeclk-exists-quirk;
-	snps,dis_u2_susphy_quirk;
-	snps,dis-tx-ipgap-linecheck-quirk;
-};
-
-/* BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V16 */
-"""
-    text = text.rstrip() + "\n" + addition
+    text = text.rstrip() + "\\n\\n/* " + marker + " */\\n"
 source.write_text(text)
+if marker not in text:
+    raise SystemExit("RG353PS v25 DWC3 PHY-default marker is missing")
 for prop in ("snps,dis_enblslpm_quirk;", "snps,dis-u2-freeclk-exists-quirk;",
              "snps,dis_u2_susphy_quirk;", "snps,dis-tx-ipgap-linecheck-quirk;"):
-    if prop not in text:
-        raise SystemExit("Failed to apply RG353PS High-Speed PHY quirk: " + prop)
-if marker not in text or "&usb_host0_xhci {" not in text:
-    raise SystemExit("RG353PS DWC3 node override is missing")
-print("Applied RG353PS USB2 High-Speed v16 diagnostics: raw EP2 events, active TRB state and explicit WRITE-vs-DISCARD path tracing")
+    if prop in text:
+        raise SystemExit("v25 unexpectedly retained a custom DWC3 USB2-PHY quirk: " + prop)
+print("Applied RG353PS v25: upstream DWC3 USB2-PHY defaults; EP2/TRB diagnostics retained")
 PYCODE
 
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.
@@ -2139,7 +2126,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
-  "usb_storage_diagnostic_revision": "usb-full-speed-dwc3-ep2-fsg-write-stage-watchdog-v24-single-out-512",
+  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v25-default-phy-512",
   "complete_sd_image": false,
   "hardware_tested": false
 }
