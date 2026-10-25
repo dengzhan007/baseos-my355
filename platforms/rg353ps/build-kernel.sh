@@ -2139,7 +2139,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
-  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v23-single-out-512",
+  "usb_storage_diagnostic_revision": "usb-full-speed-dwc3-ep2-fsg-write-stage-watchdog-v24-single-out-512",
   "complete_sd_image": false,
   "hardware_tested": false
 }
