@@ -1711,10 +1711,40 @@ source.write_text(text)
 print("Applied RG353PS v16 FSG WRITE-vs-DISCARD path diagnostics")
 PYCODE
 
-      # High-Speed diagnostic v25: keep EP2 request/event tracing, but remove the
-      # four experimental DWC3 USB2-PHY quirks. This A/B test restores upstream
-      # PHY defaults while keeping v23's 512-byte serialized WRITE OUT requests.
+      # High-Speed diagnostic v25: retain EP2/TRB tracing but revert the four experimental
+      # DWC3 USB2-PHY DT quirks. This isolates PHY-default behavior at High-Speed.
       python3 - <<PYCODE
+from pathlib import Path
+
+source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
+if not source.is_file():
+    raise SystemExit("Could not locate RG353PS device tree for v25 USB2-PHY default test")
+text = source.read_text()
+
+# Remove the exact node override injected by earlier diagnostic builds if the
+# cached source tree was reused. Do not remove any upstream property definitions.
+legacy_override = """&usb_host0_xhci {
+\tsnps,dis_enblslpm_quirk;
+\tsnps,dis-u2-freeclk-exists-quirk;
+\tsnps,dis_u2_susphy_quirk;
+\tsnps,dis-tx-ipgap-linecheck-quirk;
+};
+
+/* BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V16 */
+"""
+if legacy_override in text:
+    text = text.replace(legacy_override, "", 1)
+elif "BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V16" in text:
+    raise SystemExit("Found the legacy v16 DWC3 PHY marker without its expected override")
+
+marker = "BASEOS_RG353PS_TEST_DWC3_EP2_DEFAULT_PHY_V25"
+if marker not in text:
+    text = text.rstrip() + "\n\n/* " + marker + " */\n"
+source.write_text(text)
+if marker not in text or legacy_override in text:
+    raise SystemExit("Could not restore upstream DWC3 USB2-PHY defaults for v25")
+print("Applied RG353PS v25: upstream DWC3 USB2-PHY defaults; EP2/TRB diagnostics retained")
+PYCODE
 from pathlib import Path
 
 source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
