@@ -2089,17 +2089,29 @@ PYCODE
       printf "%s\n" "$INPUT_KEY" > "$SRC/.baseos-rg353ps-input-key"
     fi
 
-      # High-Speed diagnostic v26: end each 512-byte EP2 Bulk-OUT request
-      # at its TRB boundary. This forces the next chunk to use STARTTRANSFER
-      # rather than repeatedly extending the long-lived resource with UPDATETRANSFER.
+      # High-Speed diagnostic v27: set LST only for actual 512-byte WRITE-data chunks,
+      # never for the CBW buffer (allocated as 512 bytes but carrying 31 bytes).
+      # This tests a fresh STARTTRANSFER per data chunk without breaking BOT discovery.
       python3 - <<PYCODE
 from pathlib import Path
 
 source = Path("$SRC/drivers/usb/dwc3/gadget.c")
 if not source.is_file():
-    raise SystemExit("Could not locate DWC3 gadget source for v26 EP2 OUT restart test")
+    raise SystemExit("Could not locate DWC3 gadget source for v27 EP2 OUT restart test")
 text = source.read_text()
-marker = "BASEOS_RG353PS_EP2_BULK_OUT_LST_PER_REQUEST_V26"
+legacy_marker = "BASEOS_RG353PS_EP2_BULK_OUT_LST_PER_REQUEST_V26"
+marker = "BASEOS_RG353PS_EP2_BULK_OUT_LST_FOR_WRITE_CHUNK_V27"
+old_condition = "\t    !dep->stream_capable && trb_length == 512 && !chain)"
+new_condition = "\t    !dep->stream_capable && is_last && trb_length == 512 && !chain)"
+
+# Upgrade an already-patched source tree in place instead of stacking a second LST block.
+if legacy_marker in text and marker not in text:
+    if text.count(old_condition) != 1:
+        raise SystemExit("Could not uniquely upgrade legacy v26 LST condition")
+    text = text.replace(legacy_marker, marker, 1)
+    text = text.replace(old_condition, new_condition, 1)
+    source.write_text(text)
+
 if marker not in text:
     anchor = """\tif (chain)
 \t\ttrb->ctrl |= DWC3_TRB_CTRL_CHN;
@@ -2108,19 +2120,46 @@ if marker not in text:
 \t\ttrb->ctrl |= DWC3_TRB_CTRL_LST;
 """
     if text.count(anchor) != 1:
-        raise SystemExit("Could not uniquely locate DWC3 TRB chain/LST setup for v26")
+        raise SystemExit("Could not uniquely locate DWC3 TRB chain/LST setup for v27")
     replacement = anchor + """
-\t/* BASEOS_RG353PS_EP2_BULK_OUT_LST_PER_REQUEST_V26 */
+\t/* BASEOS_RG353PS_EP2_BULK_OUT_LST_FOR_WRITE_CHUNK_V27 */
 \tif (dep->number == 2 &&
 \t    usb_endpoint_dir_out(dep->endpoint.desc) &&
-\t    !dep->stream_capable && trb_length == 512 && !chain)
+\t    !dep->stream_capable && is_last && trb_length == 512 && !chain)
 \t\ttrb->ctrl |= DWC3_TRB_CTRL_LST;
 """
     text = text.replace(anchor, replacement, 1)
     source.write_text(text)
-if marker not in text:
-    raise SystemExit("DWC3 v26 EP2 Bulk-OUT LST marker is missing")
-print("Applied RG353PS v26: each EP2 Bulk-OUT request terminates its transfer")
+if marker not in text or old_condition in text:
+    raise SystemExit("DWC3 v27 write-chunk LST condition was not applied correctly")
+
+# Reuse usb_request.is_last as a local diagnostic marker on FSG data chunks only.
+# The CBW path has intended length 31 and must never receive the special LST bit.
+fsg_source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
+if not fsg_source.is_file():
+    raise SystemExit("Could not locate mass-storage function source for v27 request tagging")
+fsg_text = fsg_source.read_text()
+fsg_marker = "BASEOS_RG353PS_FSG_TAG_LST_WRITE_CHUNK_V27"
+if fsg_marker not in fsg_text:
+    fstart = fsg_text.index("static bool start_out_transfer(")
+    fend = fsg_text.index("static int sleep_thread(", fstart)
+    func = fsg_text[fstart:fend]
+    queue_anchor = "\trc = start_transfer(common->fsg, common->fsg->bulk_out, bh->outreq);"
+    queue_replacement = (
+        "\t/* BASEOS_RG353PS_FSG_TAG_LST_WRITE_CHUNK_V27 */\n"
+        "\t/* Diagnostic marker only: non-stream DWC3 uses this only in the paired v27 test. */\n"
+        "\tbh->outreq->is_last = bh->rg353ps_out_path == 1 &&\n"
+        "\t\tbh->bulk_out_intended_length == 512;\n"
+        + queue_anchor
+    )
+    if func.count(queue_anchor) != 1:
+        raise SystemExit("Could not uniquely locate Bulk-OUT queue for v27 request tagging")
+    func = func.replace(queue_anchor, queue_replacement, 1)
+    fsg_text = fsg_text[:fstart] + func + fsg_text[fend:]
+    fsg_source.write_text(fsg_text)
+if fsg_marker not in fsg_text:
+    raise SystemExit("FSG v27 WRITE-chunk marker is missing")
+print("Applied RG353PS v27: LST only on real 512-byte WRITE-data OUT requests; CBW stays standard")
 PYCODE
 
     cd "$SRC"
@@ -2172,7 +2211,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
-  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v26-out-lst-restart-512",
+  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v27-write-only-lst-512",
   "complete_sd_image": false,
   "hardware_tested": false
 }
