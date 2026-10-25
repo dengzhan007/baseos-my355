@@ -2254,7 +2254,7 @@ end = text.index("static int _fsg_common_get_max_lun(", start)
 func = text[start:end]
 callback_marker = "FSG OUT lifecycle callback v31"
 if callback_marker not in func:
-    anchor = '\tdump_msg(common, "bulk-out", req->buf, req->actual);'
+    anchor = "\tdump_msg(common, \"bulk-out\", req->buf, req->actual);"
     callback_diag = r"""
 	if (bh && bh->rg353ps_out_queue_generation) {
 		u32 rg353ps_age_ms = jiffies_to_msecs(jiffies - bh->rg353ps_out_queue_jiffies);
