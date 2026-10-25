@@ -1490,29 +1490,9 @@ def patch_do_write(func):
     if func.count(anchor) != 1:
         raise SystemExit("Could not uniquely locate WRITE loop entry")
     func = func.replace(anchor, replacement, 1)
-    # v23 A/B test: cap each host-to-device data request at 512 bytes before
-    # advancing USB offsets/counters. Keep the 16 KiB buffer allocation and
-    # single-request pipeline, isolating the transfer-size variable.
-    chunk_anchor = "\t\t\tamount = min(amount_left_to_req, FSG_BUFLEN);"
-    chunk_replacement = (
-        chunk_anchor + "\n"
-        "\t\t\t/* RG353PS v23: single-packet OUT request-size diagnostic. */\n"
-        "\t\t\tamount = min(amount, 512U);"
-    )
-    if func.count(chunk_anchor) != 1:
-        raise SystemExit("Could not uniquely locate WRITE chunk-size calculation")
-    func = func.replace(chunk_anchor, chunk_replacement, 1)
-    # v21 A/B test: serialize WRITE data reception by allowing only one
-    # Bulk-OUT request to be outstanding. If this fixes stalls, the failure
-    # is likely tied to DWC3 handling of pipelined/multiple queued OUT TRBs.
-    pipeline_anchor = "\t\tif (bh->state == BUF_STATE_EMPTY && get_some_more) {"
-    pipeline_replacement = (
-        "\t\tif (bh->state == BUF_STATE_EMPTY && get_some_more &&\n"
-        "\t\t    common->next_buffhd_to_fill == common->next_buffhd_to_drain) {"
-    )
-    if func.count(pipeline_anchor) != 1:
-        raise SystemExit("Could not uniquely locate WRITE request-pipeline condition")
-    func = func.replace(pipeline_anchor, pipeline_replacement, 1)
+    # Keep the upstream FSG buffer-sized WRITE requests and buffer pipeline.
+    # Do not serialize writes or cap each USB OUT request at 512 bytes; those
+    # diagnostic changes magnified scheduling latency and did not fix the stall.
     queue_anchor = (
         "\t\t\tset_bulk_out_req_length(common, bh, amount);\n"
         "\t\t\tif (!start_out_transfer(common, bh))"
@@ -2089,110 +2069,74 @@ PYCODE
       printf "%s\n" "$INPUT_KEY" > "$SRC/.baseos-rg353ps-input-key"
     fi
 
-      # High-Speed diagnostic v28: end an idle EP2 Bulk-OUT transfer after each
-      # successfully completed request. The next CBW/data request must then use
-      # STARTTRANSFER rather than append to a long-lived resource with UPDATETRANSFER.
-      # Keep standard DWC3 TRB control bits; do not use the experimental non-stream LST bit.
+      # High-Speed diagnostic v29: restore upstream DWC3 transfer lifecycle.
+      # Keep the diagnostic tracing, but never ENDTRANSFER/restart EP2 after each request.
       python3 - <<PYCODE
 from pathlib import Path
+import re
 
 source = Path("$SRC/drivers/usb/dwc3/gadget.c")
 if not source.is_file():
-    raise SystemExit("Could not locate DWC3 gadget source for v28 EP2 OUT restart test")
+    raise SystemExit("Could not locate DWC3 gadget source for v29 cleanup")
 text = source.read_text()
 
-# Remove legacy LST experiments if this build reused an already-patched source tree.
-legacy_blocks = [
-    """\t/* BASEOS_RG353PS_EP2_BULK_OUT_LST_PER_REQUEST_V26 */
-\tif (dep->number == 2 &&
-\t    usb_endpoint_dir_out(dep->endpoint.desc) &&
-\t    !dep->stream_capable && trb_length == 512 && !chain)
-\t\ttrb->ctrl |= DWC3_TRB_CTRL_LST;
-""",
-    """\t/* BASEOS_RG353PS_EP2_BULK_OUT_LST_FOR_WRITE_CHUNK_V27 */
-\tif (dep->number == 2 &&
-\t    usb_endpoint_dir_out(dep->endpoint.desc) &&
-\t    !dep->stream_capable && is_last && trb_length == 512 && !chain)
-\t\ttrb->ctrl |= DWC3_TRB_CTRL_LST;
-"""
+# Remove only the prior diagnostic non-stream LST overrides, if present in a
+# reused source tree. Leave upstream TRB control handling untouched.
+legacy_patterns = [
+    r"\t/\* BASEOS_RG353PS_EP2_BULK_OUT_LST_PER_REQUEST_V26 \*/\n"
+    r"\tif \(dep->number == 2 &&\n"
+    r"\t    usb_endpoint_dir_out\(dep->endpoint.desc\) &&\n"
+    r"\t    !dep->stream_capable && trb_length == 512 && !chain\)\n"
+    r"\t\ttrb->ctrl \|= DWC3_TRB_CTRL_LST;\n",
+    r"\t/\* BASEOS_RG353PS_EP2_BULK_OUT_LST_FOR_WRITE_CHUNK_V27 \*/\n"
+    r"\tif \(dep->number == 2 &&\n"
+    r"\t    usb_endpoint_dir_out\(dep->endpoint.desc\) &&\n"
+    r"\t    !dep->stream_capable && is_last && trb_length == 512 && !chain\)\n"
+    r"\t\ttrb->ctrl \|= DWC3_TRB_CTRL_LST;\n",
 ]
-for legacy in legacy_blocks:
-    text = text.replace(legacy, "", 1)
+for pattern in legacy_patterns:
+    text = re.sub(pattern, "", text, count=1)
 
+# Remove the v28 ENDTRANSFER hook from a reused source tree. The original
+# END_TRANSFER_PENDING check below the hook is retained verbatim.
 marker = "BASEOS_RG353PS_EP2_IDLE_OUT_ENDTRANSFER_RESTART_V28"
-if marker not in text:
-    anchor = """\tdwc3_gadget_ep_cleanup_completed_requests(dep, event, status);
+if marker in text:
+    pattern = re.compile(
+        r"\t/\* BASEOS_RG353PS_EP2_IDLE_OUT_ENDTRANSFER_RESTART_V28 \*/.*?"
+        r"(?=\tif \(dep->flags & DWC3_EP_END_TRANSFER_PENDING\)\n"
+        r"\t\tgoto out;)",
+        re.S,
+    )
+    text, removed = pattern.subn("", text, count=1)
+    if removed != 1:
+        raise SystemExit("Could not safely remove the v28 idle EP2 OUT ENDTRANSFER hook")
 
-\tif (dep->flags & DWC3_EP_END_TRANSFER_PENDING)
-\t\tgoto out;
-"""
-    if text.count(anchor) != 1:
-        raise SystemExit("Could not uniquely locate DWC3 completed-request boundary for v28")
-    replacement = anchor.replace(
-        "\n\tif (dep->flags & DWC3_EP_END_TRANSFER_PENDING)\n\t\tgoto out;\n",
-        """
-\t/* BASEOS_RG353PS_EP2_IDLE_OUT_ENDTRANSFER_RESTART_V28 */
-\t/*
-\t * The RG353PS test has shown EP2 Bulk-OUT requests can remain attached to
-\t * one transfer resource indefinitely. Once a request completed and there
-\t * are no queued/started requests left, close that idle transfer. A later
-\t * gadget request is held by END_TRANSFER_PENDING and starts with a fresh
-\t * STARTTRANSFER after the command-complete event.
-\t */
-\tif (dep->number == 2 && dep->endpoint.desc &&
-\t    usb_endpoint_xfer_bulk(dep->endpoint.desc) &&
-\t    usb_endpoint_dir_out(dep->endpoint.desc) && !dep->stream_capable &&
-\t    event->endpoint_event == DWC3_DEPEVT_XFERINPROGRESS && !status &&
-\t    list_empty(&dep->started_list) && list_empty(&dep->pending_list)) {
-\t\tpr_info("dwc3 %s: RG353PS v28 ending idle EP2 OUT transfer after XferInProgress resource=%u flags=%08x\\\\n",
-\t\t\tdev_name(dwc->dev), dep->resource_index, dep->flags);
-\t\tdwc3_stop_active_transfer(dep, true, true);
-\t\tpr_info("dwc3 %s: RG353PS v28 EP2 OUT restart state flags=%08x resource=%u\\\\n",
-\t\t\tdev_name(dwc->dev), dep->flags, dep->resource_index);
-\t\tif (dep->flags & (DWC3_EP_END_TRANSFER_PENDING | DWC3_EP_DELAY_STOP))
-\t\t\tgoto out;
-\t}
-
-\tif (dep->flags & DWC3_EP_END_TRANSFER_PENDING)
-\t\tgoto out;
-""", 1)
-    text = text.replace(anchor, replacement, 1)
-    source.write_text(text)
-
-if marker not in text:
-    raise SystemExit("DWC3 v28 idle EP2 OUT restart marker is missing")
 for legacy_marker in (
     "BASEOS_RG353PS_EP2_BULK_OUT_LST_PER_REQUEST_V26",
-    "BASEOS_RG353PS_EP2_BULK_OUT_LST_FOR_WRITE_CHUNK_V27"
+    "BASEOS_RG353PS_EP2_BULK_OUT_LST_FOR_WRITE_CHUNK_V27",
+    "BASEOS_RG353PS_EP2_IDLE_OUT_ENDTRANSFER_RESTART_V28",
 ):
     if legacy_marker in text:
-        raise SystemExit("Legacy non-stream LST experiment remains: " + legacy_marker)
+        raise SystemExit("Legacy DWC3 transfer experiment remains: " + legacy_marker)
+source.write_text(text)
 
-# Remove the v27 request.is_last marker if a cached source tree contains it.
 fsg_source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
 if not fsg_source.is_file():
-    raise SystemExit("Could not locate mass-storage function source for v28 cleanup")
+    raise SystemExit("Could not locate mass-storage function source for v29 cleanup")
 fsg_text = fsg_source.read_text()
-old_fsg_marker = "BASEOS_RG353PS_FSG_TAG_LST_WRITE_CHUNK_V27"
-if old_fsg_marker in fsg_text:
-    fstart = fsg_text.index("static bool start_out_transfer(")
-    fend = fsg_text.index("static int sleep_thread(", fstart)
-    func = fsg_text[fstart:fend]
-    old_tag = (
-        "\t/* BASEOS_RG353PS_FSG_TAG_LST_WRITE_CHUNK_V27 */\n"
-        "\t/* Diagnostic marker only: non-stream DWC3 uses this only in the paired v27 test. */\n"
-        "\tbh->outreq->is_last = bh->rg353ps_out_path == 1 &&\n"
-        "\t\tbh->bulk_out_intended_length == 512;\n"
-    )
-    if func.count(old_tag) != 1:
-        raise SystemExit("Could not uniquely remove v27 request.is_last marker")
-    func = func.replace(old_tag, "", 1)
-    fsg_text = fsg_text[:fstart] + func + fsg_text[fend:]
-    fsg_source.write_text(fsg_text)
-if old_fsg_marker in fsg_text:
+old_tag = (
+    "\t/* BASEOS_RG353PS_FSG_TAG_LST_WRITE_CHUNK_V27 */\n"
+    "\t/* Diagnostic marker only: non-stream DWC3 uses this only in the paired v27 test. */\n"
+    "\tbh->outreq->is_last = bh->rg353ps_out_path == 1 &&\n"
+    "\t\tbh->bulk_out_intended_length == 512;\n"
+)
+if old_tag in fsg_text:
+    fsg_text = fsg_text.replace(old_tag, "", 1)
+if "BASEOS_RG353PS_FSG_TAG_LST_WRITE_CHUNK_V27" in fsg_text:
     raise SystemExit("Legacy v27 request.is_last marker remains in mass-storage function")
+fsg_source.write_text(fsg_text)
 
-print("Applied RG353PS v28: end idle EP2 OUT transfer after completed request; standard TRB control restored")
+print("Applied RG353PS v29: upstream DWC3 transfer lifecycle; native FSG WRITE chunking/pipeline; standard TRB flags")
 PYCODE
 
     cd "$SRC"
@@ -2244,7 +2188,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
-  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-ep2-fsg-write-stage-watchdog-v28-endtransfer-restart",
+  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-upstream-ep2-normal-fsg-write-v29",
   "complete_sd_image": false,
   "hardware_tested": false
 }
