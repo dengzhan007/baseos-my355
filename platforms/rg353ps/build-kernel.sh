@@ -1988,7 +1988,7 @@ elif reset_count != 0:
     raise SystemExit("Unexpected count while removing v18 request-field writes: " + str(reset_count))
 fsg_text = fsg_text.replace(
     "FSG request-reuse-reset v18",
-    "FSG request-reuse-state v19"
+    "FSG request-previous-state v31"
 )
 
 # The v18 short-DISCARD branch duplicated the upstream error check and changed
@@ -2165,6 +2165,122 @@ fsg_source.write_text(fsg_text)
 print("Applied RG353PS v29: upstream DWC3 transfer lifecycle; native FSG WRITE chunking/pipeline; standard TRB flags")
 PYCODE
 
+      # High-Speed diagnostic v31: correlate each FSG OUT request generation with its callback.
+      # No behavioral changes to request reuse, DWC3 ENDTRANSFER, PHY settings, or chunk size.
+      python3 - <<PYCODE
+from pathlib import Path
+
+header = Path("$SRC/drivers/usb/gadget/function/storage_common.h")
+htext = header.read_text()
+start = htext.find("struct fsg_buffhd {")
+end = htext.find("\n};", start)
+if start < 0 or end < 0:
+    raise SystemExit("Could not locate struct fsg_buffhd for v31 lifecycle fields")
+buff = htext[start:end]
+field_marker = "rg353ps_out_queue_generation"
+if field_marker not in buff:
+    anchor = "\tu8 rg353ps_out_path;"
+    fields = (
+        anchor + "\n"
+        "\t/* v31: request generation and last completion for lifecycle diagnostics. */\n"
+        "\tu32 rg353ps_out_queue_generation;\n"
+        "\tu32 rg353ps_out_last_generation;\n"
+        "\tu32 rg353ps_out_completion_count;\n"
+        "\tunsigned long rg353ps_out_queue_jiffies;\n"
+        "\tu32 rg353ps_out_last_elapsed_ms;\n"
+        "\tint rg353ps_out_last_status;\n"
+        "\tu32 rg353ps_out_last_actual;\n"
+        "\tu32 rg353ps_out_last_intended;"
+    )
+    if buff.count(anchor) != 1:
+        raise SystemExit("Could not uniquely locate rg353ps_out_path for v31 fields")
+    htext = htext[:start] + buff.replace(anchor, fields, 1) + htext[end:]
+    header.write_text(htext)
+
+fsg_source = Path("$SRC/drivers/usb/gadget/function/f_mass_storage.c")
+text = fsg_source.read_text()
+if ("\tbh->outreq->actual = 0;\n\tbh->outreq->status = -EINPROGRESS;\n") in text:
+    raise SystemExit("Unexpected manual usb_request status/actual reset remains after v19 cleanup")
+
+# Queue-side record captures previous callback state before reusing the request.
+start = text.index("static bool start_out_transfer(")
+end = text.index("static int sleep_thread(", start)
+func = text[start:end]
+queue_anchor = "\trc = start_transfer(common->fsg, common->fsg->bulk_out, bh->outreq);"
+queue_marker = "FSG OUT lifecycle queue v31"
+if queue_marker not in func:
+    queue_diag = r"""
+	if (bh->rg353ps_out_path >= 1 && bh->rg353ps_out_path <= 3) {
+		if (bh->rg353ps_out_queue_generation &&
+		    bh->rg353ps_out_queue_generation != bh->rg353ps_out_last_generation)
+			pr_err("baseos-msdiag: FSG OUT lifecycle REQUEUE-WITHOUT-CALLBACK v31 prev_gen=%u last_callback_gen=%u path=%u seq=%u tag=%u req=%p req_status=%d req_actual=%u intended=%u\n",
+				bh->rg353ps_out_queue_generation,
+				bh->rg353ps_out_last_generation, bh->rg353ps_out_path,
+				bh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->outreq,
+				bh->outreq->status, bh->outreq->actual,
+				bh->bulk_out_intended_length);
+		bh->rg353ps_out_queue_generation++;
+		bh->rg353ps_out_queue_jiffies = jiffies;
+		pr_info("baseos-msdiag: FSG OUT lifecycle queue v31 gen=%u path=%u seq=%u tag=%u op=0x%02x lba=%u req=%p bh=%p bh_state=%d req_status_before=%d req_actual_before=%u req_len=%u intended=%u prev_callback_gen=%u prev_callback_count=%u prev_status=%d prev_actual=%u prev_intended=%u\n",
+			bh->rg353ps_out_queue_generation, bh->rg353ps_out_path,
+			bh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,
+			bh->rg353ps_out_lba, bh->outreq, bh, bh->state,
+			bh->outreq->status, bh->outreq->actual, bh->outreq->length,
+			bh->bulk_out_intended_length, bh->rg353ps_out_last_generation,
+			bh->rg353ps_out_completion_count, bh->rg353ps_out_last_status,
+			bh->rg353ps_out_last_actual, bh->rg353ps_out_last_intended);
+	}
+"""
+    if func.count(queue_anchor) != 1:
+        raise SystemExit("Could not uniquely locate Bulk-OUT queue call for v31 lifecycle tracing")
+    func = func.replace(queue_anchor, queue_diag + "\n" + queue_anchor, 1)
+    queue_anchor = "\trc = start_transfer(common->fsg, common->fsg->bulk_out, bh->outreq);"
+    queue_result = queue_anchor + r"""
+	if (rc && bh->rg353ps_out_path >= 1 && bh->rg353ps_out_path <= 3)
+		pr_err("baseos-msdiag: FSG OUT lifecycle queue-fail v31 gen=%u path=%u seq=%u tag=%u req=%p rc=%d\n",
+			bh->rg353ps_out_queue_generation, bh->rg353ps_out_path,
+			bh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->outreq, rc);
+"""
+    if func.count(queue_anchor) != 1:
+        raise SystemExit("Could not uniquely locate queue call for v31 queue-failure logging")
+    func = func.replace(queue_anchor, queue_result, 1)
+    text = text[:start] + func + text[end:]
+    fsg_source.write_text(text)
+
+# Completion-side record is emitted before existing FSG error/state handling and never changes it.
+text = fsg_source.read_text()
+start = text.index("static void bulk_out_complete(")
+end = text.index("static int _fsg_common_get_max_lun(", start)
+func = text[start:end]
+callback_marker = "FSG OUT lifecycle callback v31"
+if callback_marker not in func:
+    anchor = '\tdump_msg(common, "bulk-out", req->buf, req->actual);'
+    callback_diag = r"""
+	if (bh && bh->rg353ps_out_queue_generation) {
+		u32 rg353ps_age_ms = jiffies_to_msecs(jiffies - bh->rg353ps_out_queue_jiffies);
+		bh->rg353ps_out_completion_count++;
+		bh->rg353ps_out_last_generation = bh->rg353ps_out_queue_generation;
+		bh->rg353ps_out_last_elapsed_ms = rg353ps_age_ms;
+		bh->rg353ps_out_last_status = req->status;
+		bh->rg353ps_out_last_actual = req->actual;
+		bh->rg353ps_out_last_intended = bh->bulk_out_intended_length;
+		pr_info("baseos-msdiag: FSG OUT lifecycle callback v31 gen=%u path=%u seq=%u tag=%u op=0x%02x lba=%u req=%p bh=%p status=%d actual=%u intended=%u req_len=%u age_ms=%u callback_count=%u\n",
+			bh->rg353ps_out_queue_generation, bh->rg353ps_out_path,
+			bh->rg353ps_out_seq, bh->rg353ps_out_tag, bh->rg353ps_out_op,
+			bh->rg353ps_out_lba, req, bh, req->status, req->actual,
+			bh->bulk_out_intended_length, req->length, rg353ps_age_ms,
+			bh->rg353ps_out_completion_count);
+	}
+"""
+    if func.count(anchor) != 1:
+        raise SystemExit("Could not uniquely locate Bulk-OUT callback anchor for v31")
+    func = func.replace(anchor, anchor + "\n" + callback_diag, 1)
+    text = text[:start] + func + text[end:]
+    fsg_source.write_text(text)
+
+print("Applied RG353PS v31: trace FSG OUT queue generations, completion status and request age without changing request lifecycle")
+PYCODE
+
     cd "$SRC"
     export ARCH=arm64 CROSS_COMPILE="$CROSS" SOURCE_DATE_EPOCH=0
     export KBUILD_BUILD_USER=baseos KBUILD_BUILD_HOST=rg353ps
@@ -2214,7 +2330,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
-  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-legacy-phy-quirks-normal-fsg-write-v30",
+  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-v31-fsg-request-lifecycle-trace",
   "complete_sd_image": false,
   "hardware_tested": false
 }
