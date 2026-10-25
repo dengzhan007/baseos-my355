@@ -1477,6 +1477,15 @@ def edit_func(start_sig, end_sig, transform, label):
 
 # Explicitly tag the three places which queue Bulk-OUT requests.
 def patch_do_write(func):
+    # Fail the build if a future edit reintroduces the 512-byte chunk cap or
+    # single-request serialization. The upstream FSG buffer/pipeline is the
+    # baseline for this diagnostic revision.
+    if "\\tamount = min(amount_left_to_req, FSG_BUFLEN);" not in func:
+        raise SystemExit("Upstream FSG WRITE buffer-sized chunk calculation is missing")
+    if "amount = min(amount, 512U);" in func:
+        raise SystemExit("Unexpected 512-byte WRITE request cap remains")
+    if "common->next_buffhd_to_fill == common->next_buffhd_to_drain" in func:
+        raise SystemExit("Unexpected single-request WRITE serialization remains")
     anchor = "\tamount_left_to_write = common->data_size_from_cmnd;\n\n\twhile (amount_left_to_write > 0) {"
     replacement = (
         "\tamount_left_to_write = common->data_size_from_cmnd;\n"
