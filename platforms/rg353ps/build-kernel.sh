@@ -1700,19 +1700,18 @@ source.write_text(text)
 print("Applied RG353PS v16 FSG WRITE-vs-DISCARD path diagnostics")
 PYCODE
 
-      # High-Speed diagnostic v25: retain EP2/TRB tracing but revert the four experimental
-      # DWC3 USB2-PHY DT quirks. This isolates PHY-default behavior at High-Speed.
+      # High-Speed diagnostic v30: restore the v18/v19 DWC3 PHY quirks as a single-variable A/B test.
+      # Keep v29 FSG chunking/pipeline, standard TRB flags, and no per-request ENDTRANSFER unchanged.
       python3 - <<PYCODE
 from pathlib import Path
 
 source = Path("$SRC/arch/arm64/boot/dts/rockchip/rk3566-anbernic-rg353ps.dts")
 if not source.is_file():
-    raise SystemExit("Could not locate RG353PS device tree for v25 USB2-PHY default test")
+    raise SystemExit("Could not locate RG353PS device tree for v30 legacy-PHY A/B test")
 text = source.read_text()
 
-# Remove the exact node override injected by earlier diagnostic builds if the
-# cached source tree was reused. Do not remove any upstream property definitions.
-legacy_override = """&usb_host0_xhci {
+# Normalize the older injected blocks first so cached/reused source trees remain idempotent.
+legacy_v16 = """&usb_host0_xhci {
 \tsnps,dis_enblslpm_quirk;
 \tsnps,dis-u2-freeclk-exists-quirk;
 \tsnps,dis_u2_susphy_quirk;
@@ -1721,18 +1720,36 @@ legacy_override = """&usb_host0_xhci {
 
 /* BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V16 */
 """
-if legacy_override in text:
-    text = text.replace(legacy_override, "", 1)
-elif "BASEOS_RG353PS_TEST_DWC3_EP2_DEPCMD_TRACE_V16" in text:
-    raise SystemExit("Found the legacy v16 DWC3 PHY marker without its expected override")
+if legacy_v16 in text:
+    text = text.replace(legacy_v16, "", 1)
 
-marker = "BASEOS_RG353PS_TEST_DWC3_EP2_DEFAULT_PHY_V25"
+text = text.replace("/* BASEOS_RG353PS_TEST_DWC3_EP2_DEFAULT_PHY_V25 */", "")
+
+marker = "BASEOS_RG353PS_TEST_DWC3_EP2_LEGACY_PHY_QUIRKS_V30"
+quirk_block = """&usb_host0_xhci {
+\tsnps,dis_enblslpm_quirk;
+\tsnps,dis-u2-freeclk-exists-quirk;
+\tsnps,dis_u2_susphy_quirk;
+\tsnps,dis-tx-ipgap-linecheck-quirk;
+};
+
+/* BASEOS_RG353PS_TEST_DWC3_EP2_LEGACY_PHY_QUIRKS_V30 */
+"""
+if quirk_block in text:
+    text = text.replace(quirk_block, "", 1)
 if marker not in text:
-    text = text.rstrip() + "\n\n/* " + marker + " */\n"
+    text = text.rstrip() + "\n\n" + quirk_block
+
+if text.count(marker) != 1:
+    raise SystemExit("Expected exactly one v30 legacy PHY quirk marker")
+if text.count("snps,dis_enblslpm_quirk;") < 1 or \
+   text.count("snps,dis-u2-freeclk-exists-quirk;") < 1 or \
+   text.count("snps,dis_u2_susphy_quirk;") < 1 or \
+   text.count("snps,dis-tx-ipgap-linecheck-quirk;") < 1:
+    raise SystemExit("v30 legacy PHY quirk set is incomplete")
+
 source.write_text(text)
-if marker not in text or legacy_override in text:
-    raise SystemExit("Could not restore upstream DWC3 USB2-PHY defaults for v25")
-print("Applied RG353PS v25: upstream DWC3 USB2-PHY defaults; EP2/TRB diagnostics retained")
+print("Applied RG353PS v30: restored four v18/v19 DWC3 PHY quirks; v29 FSG/TRB lifecycle unchanged")
 PYCODE
 
       # Keep the upstream mass-storage buffer size and normal pipelined OUT requests.
@@ -2197,7 +2214,7 @@ PYCODE
   "regdb_signing_certificate_sha256": "$REGDB_CERT_SHA",
   "regulatory_database_embedded_in_kernel": true,
   "device_tree": "rk3566-anbernic-rg353ps.dtb",
-  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-upstream-ep2-normal-fsg-write-v29",
+  "usb_storage_diagnostic_revision": "usb-high-speed-dwc3-legacy-phy-quirks-normal-fsg-write-v30",
   "complete_sd_image": false,
   "hardware_tested": false
 }
