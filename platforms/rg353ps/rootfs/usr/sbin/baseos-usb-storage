@@ -285,17 +285,17 @@ cleanup() {
   trap - EXIT INT TERM HUP
   log "cleanup entry trigger=$CLEANUP_TRIGGER status=$cleanup_status elapsed_i=$i bound=$BOUND"
 
+  # Preserve the v31 transfer pipeline. Keep teardown simple: the v32 log
+  # stopped after UDC unbind, apparently during configfs function unlink.
+  # Do not clear the LUN file or unlink/rmdir configfs objects on exit.
   UNBIND_OK=1
-  LUN_CLEAR_OK=0
-  unbind_rc=0
   if [ -n "$UDC" ] && [ -e "$G/UDC" ] && [ "$BOUND" -eq 1 ]; then
     unbind_result=/run/baseos-usb-storage-unbind.result
     rm -f "$unbind_result"
-    log "cleanup step=unbind begin bound=$BOUND; using bounded asynchronous sysfs write"
+    log "cleanup step=unbind begin; bounded asynchronous sysfs write"
     (
       printf '\n' > "$G/UDC" 2>/dev/null
-      write_rc=$?
-      printf '%s\n' "$write_rc" > "$unbind_result" 2>/dev/null
+      printf '%s\n' "$?" > "$unbind_result" 2>/dev/null
     ) &
     unbind_pid=$!
     unbind_ticks=0
@@ -307,122 +307,64 @@ cleanup() {
       unbind_rc="$(cat "$unbind_result" 2>/dev/null || echo 1)"
       wait "$unbind_pid" 2>/dev/null || :
       if [ "$unbind_rc" -eq 0 ]; then
-        UNBIND_OK=1
         BOUND=0
         log "cleanup step=unbind complete write_rc=$unbind_rc"
       else
         UNBIND_OK=0
-        log "ERROR: UDC unbind sysfs write returned rc=$unbind_rc"
+        log "ERROR: UDC unbind write returned rc=$unbind_rc"
       fi
     else
-      unbind_rc=124
       UNBIND_OK=0
-      log "WARNING: UDC unbind write did not return within 5 seconds (pid=$unbind_pid); skipping unsafe remount"
+      log "WARNING: UDC unbind exceeded 5 seconds; skipping remount to avoid concurrent host access"
       kill -KILL "$unbind_pid" 2>/dev/null || :
     fi
     rm -f "$unbind_result"
   elif [ "$BOUND" -eq 0 ]; then
-    log "cleanup step=unbind skipped; helper did not leave a confirmed UDC binding"
+    log "cleanup step=unbind skipped; helper is not bound"
   else
     UNBIND_OK=0
     log "ERROR: cannot address UDC unbind path"
   fi
 
-  # Always dismiss the USB prompt after cable-removal handling, before any
-  # potentially slow LUN/configfs operation.
+  # Stop the on-screen prompt immediately so it cannot keep scrolling while
+  # storage cleanup proceeds.
   if [ -n "$PROMPT_PID" ]; then
     log "cleanup step=stop-prompt signal pid=$PROMPT_PID"
     kill "$PROMPT_PID" 2>/dev/null || :
     PROMPT_PID=
   fi
 
-  # Keep the high-volume trace in the kernel ring buffer and persist its tail
-  # to the boot partition; do not run a full endpoint snapshot during cleanup.
-  if command -v dmesg >/dev/null 2>&1; then
-    cleanup_events="$(dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|dwc3|usb|phy|gadget|udc|ep0out|mass.storage|vbus|extcon|role.switch|rockchip-usb2phy|otg' | tail -n 160 || :)"
-    if [ -n "$cleanup_events" ]; then
-      printf '%s\n' "$cleanup_events" >> "$DIAG_LOG"
-      if [ -d /mnt/boot ] && grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
-        printf '%s\n' "$cleanup_events" >> "$BOOT_LOG" 2>/dev/null || :
-      fi
-    fi
-  fi
-
   if [ "$UNBIND_OK" -eq 1 ]; then
-    # The v32 log ended immediately after UDC unbind completed, before the
-    # configfs symlink removal returned. Do NOT unlink/rmdir the function here.
-    # Instead, clear the LUN file in a bounded worker. The gadget remains
-    # configured but UDC-unbound; the host cannot access the card.
-    lun_file="$G/functions/mass_storage.0/lun.0/file"
-    lun_result=/run/baseos-usb-storage-lun-clear.result
-    rm -f "$lun_result"
-    if [ -e "$lun_file" ]; then
-      log "cleanup step=lun-clear begin; bounded wait 2 seconds; symlink/function teardown intentionally skipped"
-      (
-        printf '\n' > "$lun_file" 2>/dev/null
-        clear_rc=$?
-        printf '%s\n' "$clear_rc" > "$lun_result" 2>/dev/null
-      ) &
-      lun_pid=$!
-      lun_ticks=0
-      while [ "$lun_ticks" -lt 20 ] && [ ! -f "$lun_result" ]; do
-        sleep 0.1
-        lun_ticks=$((lun_ticks+1))
-      done
-      if [ -f "$lun_result" ]; then
-        lun_rc="$(cat "$lun_result" 2>/dev/null || echo 1)"
-        wait "$lun_pid" 2>/dev/null || :
-        if [ "$lun_rc" -eq 0 ]; then
-          LUN_CLEAR_OK=1
-          log "cleanup step=lun-clear complete rc=$lun_rc"
-        else
-          log "WARNING: LUN file clear returned rc=$lun_rc; local remount will be attempted only after UDC unbind"
-        fi
-      else
-        log "WARNING: LUN file clear exceeded 2 seconds; skipping configfs teardown and attempting local remount after UDC unbind"
-        kill -KILL "$lun_pid" 2>/dev/null || :
-      fi
-    else
-      LUN_CLEAR_OK=1
-      log "cleanup step=lun-clear skipped; no mass-storage LUN file attribute"
-    fi
-    rm -f "$lun_result"
-
-    if [ "$HAD_ADB" -eq 1 ] && [ -d "$G/functions/ffs.adb" ]; then
-      if [ ! -e "$G/configs/b.1/f-ffs.adb" ]; then
-        ln -sfn "$G/functions/ffs.adb" "$G/configs/b.1/f-ffs.adb" 2>/dev/null || :
-      fi
-    fi
-    log "cleanup step=local-remount begin lun_clear_ok=$LUN_CLEAR_OK"
+    # Restore the local filesystem only after UDC unbind returned successfully.
+    log "cleanup step=local-remount begin"
     if [ -n "$MOUNTPOINT" ] && [ -n "$DEVICE" ] && ! is_mounted "$MOUNTPOINT"; then
       mount -t "$FSTYPE" -o rw,noatime "$DEVICE" "$MOUNTPOINT" 2>/dev/null || \
-        log "WARNING: could not remount $DEVICE at $MOUNTPOINT; data partition remains unmounted"
+        log "WARNING: could not remount $DEVICE at $MOUNTPOINT"
     fi
     if [ -n "$MOUNTPOINT" ] && is_mounted "$MOUNTPOINT"; then
       log "cleanup step=local-remount complete mountpoint=$MOUNTPOINT"
-      cp "$DIAG_LOG" "$MOUNTPOINT/rg353ps-usb-storage.log" 2>/dev/null || :
-      sync
     else
-      log "WARNING: local data partition is not mounted; diagnostics will resume, but avoid further writes until reboot/recovery"
+      log "WARNING: local data partition is not mounted; avoid further writes until recovery"
     fi
-    # Function link is retained on purpose so configfs cannot block the return
-    # to the frontend. On the next entry the same LUN/function is reused.
   else
-    log "WARNING: UDC could not be confirmed unbound; preserving the backing device state and skipping remount"
+    log "WARNING: UDC unbind not confirmed; backing device remains unmounted for safety"
   fi
 
-  # Release the frontend/startup state even if LUN cleanup is slow or failed.
+  # Always release the frontend pause so diagnostics can resume. If unbind
+  # failed, retain ACTIVE as a guard against a second concurrent storage session.
   rm -f "$REQUEST" "$PAUSED"
-  if [ "$UNBIND_OK" -eq 1 ] && [ "$LUN_CLEAR_OK" -eq 1 ]; then
+  if [ "$UNBIND_OK" -eq 1 ]; then
     rm -f "$ACTIVE"
   else
-    log "WARNING: keeping active marker because USB cleanup was incomplete; reboot may be needed before another storage session"
+    log "WARNING: keeping active marker because UDC unbind was not confirmed"
   fi
+
   restore_console_loglevel
-  log "storage mode ended; unbind_ok=$UNBIND_OK lun_clear_ok=$LUN_CLEAR_OK"
+  log "storage mode ended; unbind_ok=$UNBIND_OK; configfs function retained for next entry"
+  # Persist logs only after the frontend is released; avoid a blocking sync
+  # before returning to diagnostics.
   if [ -d /mnt/boot ] && grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
     cp "$DIAG_LOG" "$BOOT_LOG" 2>/dev/null || :
-    sync
   fi
 }
 CLEANUP_TRIGGER=EXIT
