@@ -46,6 +46,13 @@ fi
 
 log "BaseOS userspace initialized for RG353PS"
 
+# RG353PS uses this target-specific rcS instead of the shared overlay rcS,
+# so it must draw the normal full-screen logo itself. Do this before any
+# first-boot or storage status pill, which intentionally overlays the logo.
+if [ -x /usr/bin/fbsplash ]; then
+  /usr/bin/fbsplash 0 >/dev/null 2>&1 || log "WARNING: unable to render boot logo"
+fi
+
 # Do not start the diagnostic UI until user storage has been initialized.
 # The BaseOS splash pill overlays the bootloader logo during first-boot work.
 BOOT_STORAGE_MARKER=/mnt/boot/.baseos-userdata-v1
