@@ -50,7 +50,6 @@ log "BaseOS userspace initialized for RG353PS"
 # user-data partition has really been initialized and mounted. On a fresh image
 # the full-screen progress prompt stays visible while partition work runs.
 BOOT_STORAGE_MARKER=/mnt/boot/.baseos-userdata-v1
-BOOT_CONFIRM_MARKER=/mnt/boot/.baseos-firstboot-confirmed-v1
 if [ ! -e "$BOOT_STORAGE_MARKER" ]; then
   /usr/bin/fbsplash 45 "EXPANDING STORAGE" 2>/dev/null || :
 fi
@@ -66,9 +65,6 @@ while :; do
   /usr/bin/fbsplash 45 "EXPANDING STORAGE" 2>/dev/null || :
 done
 
-if [ ! -e "$BOOT_CONFIRM_MARKER" ]; then
-  printf 'confirmed=1\n' > "$BOOT_CONFIRM_MARKER" 2>/dev/null && sync
-fi
 /usr/bin/fbsplash 100 2>/dev/null || :
 
 # If Function/Mode was held at power-on, keep tty1's diagnostic/frontend
