@@ -29,6 +29,9 @@ static int function_down;
 static int mode_down;
 static int storage_latched;
 static int startup_checked;
+static int startup_key_release_seen;
+static int cable_state_initialized;
+static int cable_was_connected;
 static int sd_log_active;
 static char ignored_input_paths[MAX_INPUTS][PATH_LEN];
 static int ignored_input_count;
@@ -380,28 +383,18 @@ int main(void) {
                key devices briefly before making the one-shot boot decision. */
             if (key_device_found && keys_first_seen_ms >= 0 &&
                 monotonic_ms() - keys_first_seen_ms >= 1500) {
-                int boot_mode = function_down || mode_down;
                 char boot_msg[256];
                 (void)snprintf(boot_msg, sizeof(boot_msg),
-                    "BOOT_KEY_CHECK result=sampled key_device_found=1 function_down=%d mode_down=%d decision=%s",
-                    function_down, mode_down, boot_mode ? "USB_STORAGE" : "NORMAL_BOOT");
+                    "BOOT_KEY_CHECK result=sampled key_device_found=1 function_down=%d mode_down=%d decision=NORMAL_BOOT",
+                    function_down, mode_down);
                 log_message(boot_msg);
                 startup_checked = 1;
-                if (boot_mode) {
-                    int marker = open("/run/baseos-usb-storage.boot-request", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
-                    if (marker >= 0) close(marker);
-                    log_message("startup storage request latched from held Function/Mode key");
-                }
+                startup_key_release_seen = !(function_down || mode_down);
                 {
                     int ready = open("/run/rg353ps-hotkeyd.ready", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
                     if (ready >= 0) close(ready);
                 }
-                if (boot_mode) {
-                    storage_latched = 1;
-                    (void)enter_usb_storage_mode(1);
-                    unlink("/run/baseos-usb-storage.boot-request");
-                    function_down = mode_down = 0;
-                }
+                log_message("boot-held Function/Mode no longer triggers USB storage; release key then hold Function and insert data cable");
             }
         }
         for(int i=0;i<input_count;++i) {
@@ -429,14 +422,22 @@ int main(void) {
             execl("/sbin/poweroff","poweroff",(char *)NULL);
             log_message("poweroff command failed");
         }
-        if (function_down || mode_down) {
-            if (!storage_latched && usb_cable_connected()) {
+        if (startup_checked && !(function_down || mode_down))
+            startup_key_release_seen = 1;
+        {
+            int cable_now = usb_cable_connected();
+            if (!cable_state_initialized) {
+                cable_was_connected = cable_now;
+                cable_state_initialized = 1;
+            } else if (startup_key_release_seen && !storage_latched &&
+                       function_down && cable_now && !cable_was_connected) {
                 storage_latched = 1;
                 (void)enter_usb_storage_mode(0);
             }
-        } else {
-            storage_latched = 0;
+            cable_was_connected = cable_now;
         }
+        if (!(function_down || mode_down))
+            storage_latched = 0;
         if(rc==0) continue;
         {
             int p=0;
