@@ -398,8 +398,8 @@ text = text[:otg_start] + otg + text[otg_end:]
 # Normalize this noisy informational trace even when SRC is restored from a
 # cache containing a previous build's dev_info injection.
 text, _sample_log_normalized = re.subn(
-    r'dev_info\(&rport->phy->dev,\s*"RG353PS USB PHY OTG sample:',
-    'dev_dbg(&rport->phy->dev, "RG353PS USB PHY OTG sample:',
+    r"dev_info\(&rport->phy->dev,\s*\"RG353PS USB PHY OTG sample:",
+    "dev_dbg(&rport->phy->dev, \"RG353PS USB PHY OTG sample:",
     text,
     count=1,
 )
@@ -581,8 +581,8 @@ inject_function(
 # The function may already contain the older dev_info trace in a cached source
 # tree. Always demote it rather than trusting the marker-based insert guard.
 text, _state_entry_log_normalized = re.subn(
-    r'dev_info\(&container_of\(work, struct rockchip_usb2phy_port, otg_sm_work\.work\)->phy->dev,\s*"RG353PS OTG state-machine entry',
-    'dev_dbg(&container_of(work, struct rockchip_usb2phy_port, otg_sm_work.work)->phy->dev, "RG353PS OTG state-machine entry',
+    r"dev_info\(&container_of\(work, struct rockchip_usb2phy_port, otg_sm_work\.work\)->phy->dev,\s*\"RG353PS OTG state-machine entry",
+    "dev_dbg(&container_of(work, struct rockchip_usb2phy_port, otg_sm_work.work)->phy->dev, \"RG353PS OTG state-machine entry",
     text,
     count=1,
 )
