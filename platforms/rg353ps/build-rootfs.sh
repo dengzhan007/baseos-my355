@@ -34,9 +34,10 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
   -v "$WORK":/work \
   -v "$HERE/rootfs":/rootfs-src:ro \
   -v "$HERE/src":/src:ro \
+  -v "$REPO_ROOT/assets":/assets:ro \
   -e KREL="$KREL" \
   alpine:3.22 sh -euc '
-    apk add --no-cache busybox-static tar zstd build-base linux-headers sdl2-dev
+    apk add --no-cache busybox-static tar zstd build-base linux-headers sdl2-dev freetype-dev freetype-static zlib-static libpng-static bzip2-static brotli-static pkgconf
 
     R=/work/rootfs
     rm -rf "$R"
@@ -86,9 +87,16 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
       -o "$R/usr/sbin/rg353ps-control-center" /src/rg353ps-control-center.c
     gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
-      -o "$R/usr/sbin/rg353ps-startup-prompt" /src/rg353ps-startup-prompt.c
-    gcc -std=c11 -O2 -Wall -Wextra -Werror -static \
       -o "$R/usr/sbin/rg353ps-hotkeyd" /src/rg353ps-hotkeyd.c
+    # Build upstream BaseOS framebuffer splash statically so the boot and
+    # USB-storage UI needs no extra runtime libraries.
+    mkdir -p "$R/usr/share/baseos"
+    gcc -static -O2 $(pkg-config --cflags freetype2) \
+      -o "$R/usr/bin/fbsplash" /src/fbsplash.c $(pkg-config --static --libs freetype2)
+    strip "$R/usr/bin/fbsplash"
+    cp /assets/boot.ttf "$R/usr/share/baseos/boot.ttf"
+    test -x "$R/usr/bin/fbsplash" || { echo "BaseOS fbsplash was not built" >&2; exit 1; }
+    test -s "$R/usr/share/baseos/boot.ttf" || { echo "BaseOS boot font is missing" >&2; exit 1; }
     # Build a target-native SDL2 KMSDRM/GLES test against the runtime library
     # already installed in the target rootfs. sdl2-dev is build-container only.
     gcc -std=c11 -O2 -Wall -Wextra -Werror \
@@ -106,11 +114,6 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
       echo "interactive control UI was not built" >&2
       exit 1
     }
-    test -x "$R/usr/sbin/rg353ps-startup-prompt" || {
-      echo "first-boot storage prompt was not built" >&2
-      exit 1
-    }
-
     test -x "$R/usr/bin/v4l2-ctl" || {
       echo "v4l2-ctl was not installed into target rootfs" >&2
       exit 1
@@ -158,7 +161,6 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     chmod 0755 "$R/usr/sbin/rg353ps-graphics-stack-test"
     chmod 0755 "$R/usr/sbin/rg353ps-sdl2-test"
     chmod 0755 "$R/usr/sbin/rg353ps-control-center"
-    chmod 0755 "$R/usr/sbin/rg353ps-startup-prompt"
     chmod 1777 "$R/tmp"
     mkdir -p "$R/mnt/SDCARD" "$R/run" "$R/root" "$R/var/empty"
     ln -sfn /mnt/SDCARD "$R/mnt/sdcard"
