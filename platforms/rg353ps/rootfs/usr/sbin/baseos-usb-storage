@@ -403,8 +403,10 @@ if [ "$BOOT_MODE" -eq 0 ]; then
   while [ ! -e "$PAUSED" ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i+1)); done
   if [ ! -e "$PAUSED" ]; then log "frontend did not pause; refusing to export a mounted filesystem"; exit 1; fi
 else
-  /usr/bin/baseos-splash --important -1 "STARTING USB STORAGE" 2>/dev/null || :
+  :
 fi
+/usr/bin/fbsplash 0 2>/dev/null || :
+/usr/bin/baseos-splash --important -1 "STARTING USB STORAGE" 2>/dev/null || :
 sync
 if ! umount "$MOUNTPOINT"; then log "could not unmount $MOUNTPOINT; refusing to export"; exit 1; fi
 log "unmounted $MOUNTPOINT; preparing USB mass storage"
