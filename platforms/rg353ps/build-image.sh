@@ -32,7 +32,6 @@ KREL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["kernel_
 
 echo "== assembling RG353PS smoke-test image =="
 mkdir -p "$WORK"
-cp "$HERE/boot/BASEOS-RUN.SH" "$WORK/BASEOS-RUN.SH"
 docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
   -v "$WORK":/work \
   -e BOOT_MIB="$BOOT_MIB" \
@@ -93,7 +92,6 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_HOST" \
     mcopy -i "$BOOTFS" /work/kernel/output/rk3566-anbernic-rg353ps.dtb ::/device_trees/rk3566-anbernic-rg353ps.dtb
     mcopy -o -i "$BOOTFS" /work/rootfs/etc/baseos.conf ::/baseos.conf
     # Install the replaceable keyboard-free diagnostic task on the FAT boot partition.
-    mcopy -o -i "$BOOTFS" /work/BASEOS-RUN.SH ::/BASEOS-RUN.SH
 
     cat > /tmp/extlinux.conf <<EOF
 LABEL BaseOS-RG353PS
