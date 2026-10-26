@@ -396,7 +396,7 @@ else:
 text = text[:otg_start] + otg + text[otg_end:]
 
 # Normalize this noisy informational trace even when SRC is restored from a
-# cache containing a previous build's dev_info injection.
+# cache containing an older dev_info injection.
 text, _sample_log_normalized = re.subn(
     r"dev_info\(&rport->phy->dev,\s*\"RG353PS USB PHY OTG sample:",
     "dev_dbg(&rport->phy->dev, \"RG353PS USB PHY OTG sample:",
