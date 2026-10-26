@@ -34,6 +34,7 @@ BOOT_MODE=0
 RESET_NOT_CONFIGURED_SECONDS=0
 RESET_RECOVERY_ATTEMPTED=0
 PROMPT_PID=
+i=unset
 ORIGINAL_PRINTK=
 CONSOLE_LOWERED=0
 : > "$DIAG_LOG"
@@ -67,7 +68,7 @@ set_storage_console_quiet() {
   if [ "$1" -gt 4 ]; then
     if printf '4 %s %s %s\n' "$2" "$3" "$4" > /proc/sys/kernel/printk 2>/dev/null; then
       CONSOLE_LOWERED=1
-      log "console output reduced to warning/error during USB storage; detailed trace remains in dmesg (original printk=$ORIGINAL_PRINTK)"
+      log "console output reduced to error-level during USB storage; detailed trace remains in dmesg (original printk=$ORIGINAL_PRINTK)"
     else
       log "WARNING: could not reduce console log level; detailed USB tracing may scroll on screen"
     fi
@@ -282,23 +283,14 @@ diagnose_usb_state_change() {
 cleanup() {
   cleanup_status=$?
   trap - EXIT INT TERM HUP
-  log "cleanup entry trigger=\${CLEANUP_TRIGGER:-EXIT} status=$cleanup_status elapsed_i=\${i:-unset} bound=$BOUND"
-  binding_before=
-  state_before=unknown
-  if [ -e "$G/UDC" ]; then
-    binding_before="$(cat "$G/UDC" 2>/dev/null || echo unreadable)"
-  fi
-  if [ -n "$UDC" ]; then
-    state_before="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
-  fi
-  log "cleanup step=state-before-unbind udc_state=$state_before gadget_binding=\${binding_before:-empty} bound_flag=$BOUND"
+  log "cleanup entry trigger=$CLEANUP_TRIGGER status=$cleanup_status elapsed_i=$i bound=$BOUND"
 
   UNBIND_OK=1
   unbind_rc=0
-  if [ -n "$UDC" ] && [ -e "$G/UDC" ] && [ -n "$binding_before" ]; then
+  if [ -n "$UDC" ] && [ -e "$G/UDC" ] && [ "$BOUND" -eq 1 ]; then
     unbind_result=/run/baseos-usb-storage-unbind.result
     rm -f "$unbind_result"
-    log "cleanup step=unbind begin; using bounded asynchronous sysfs write"
+    log "cleanup step=unbind begin bound=$BOUND; using bounded asynchronous sysfs write"
     (
       printf '\n' > "$G/UDC" 2>/dev/null
       write_rc=$?
@@ -314,17 +306,11 @@ cleanup() {
       unbind_rc="$(cat "$unbind_result" 2>/dev/null || echo 1)"
       wait "$unbind_pid" 2>/dev/null || :
       if [ "$unbind_rc" -eq 0 ]; then
-        # Only read the binding after the write returned; sysfs reads are not
-        # allowed to hold cleanup hostage if the controller itself is wedged.
-        binding_after="$(cat "$G/UDC" 2>/dev/null || echo unreadable)"
-        if [ -z "$binding_after" ]; then
-          UNBIND_OK=1
-          BOUND=0
-          log "cleanup step=unbind complete write_rc=$unbind_rc binding=empty"
-        else
-          UNBIND_OK=0
-          log "ERROR: UDC still bound after successful unbind write: binding=$binding_after; will not remount shared data while gadget may still own it"
-        fi
+        # A successful configfs UDC write returns only after the unbind operation.
+        # Avoid reading UDC state/binding again: those reads could also stall if wedged.
+        UNBIND_OK=1
+        BOUND=0
+        log "cleanup step=unbind complete write_rc=$unbind_rc"
       else
         UNBIND_OK=0
         log "ERROR: UDC unbind sysfs write returned rc=$unbind_rc; preserving gadget state and leaving data unmounted"
@@ -333,15 +319,14 @@ cleanup() {
       unbind_rc=124
       UNBIND_OK=0
       log "WARNING: UDC unbind write did not return within 5 seconds (pid=$unbind_pid); abandoning waiter and skipping follow-up UDC sysfs reads"
-      kill "$unbind_pid" 2>/dev/null || :
+      kill -KILL "$unbind_pid" 2>/dev/null || :
     fi
     rm -f "$unbind_result"
-  elif [ -e "$G/UDC" ] && [ -z "$binding_before" ]; then
-    BOUND=0
-    log "cleanup step=unbind skipped; gadget was already unbound"
+  elif [ "$BOUND" -eq 0 ]; then
+    log "cleanup step=unbind skipped; helper did not leave a confirmed UDC binding"
   else
-    BOUND=0
-    log "cleanup step=unbind skipped; UDC gadget path is absent"
+    UNBIND_OK=0
+    log "ERROR: cannot address UDC unbind path; preserving gadget state and leaving data unmounted"
   fi
 
   if [ "$UNBIND_OK" -eq 1 ]; then
@@ -362,7 +347,6 @@ cleanup() {
     log "WARNING: preserving the gadget and leaving $MOUNTPOINT unmounted to avoid concurrent host/kernel access; a reboot may be required"
   fi
 
-  # Avoid the full pre-unbind snapshot here: it delayed teardown on disconnect.
   # Preserve a bounded kernel tail in files, never replaying it to the console.
   if command -v dmesg >/dev/null 2>&1; then
     cleanup_events="$(dmesg 2>/dev/null | grep -Ei 'baseos-msdiag|dwc3|usb|phy|gadget|udc|ep0out|mass.storage|vbus|extcon|role.switch|rockchip-usb2phy|otg' | tail -n 160 || :)"
@@ -384,14 +368,14 @@ cleanup() {
     sync
   fi
 
-  # Remove the request/pause markers so the frontend/diagnostic supervisor can resume.
-  rm -f "$REQUEST" "$PAUSED"
   if [ "$UNBIND_OK" -eq 1 ]; then
-    rm -f "$ACTIVE"
+    rm -f "$REQUEST" "$PAUSED" "$ACTIVE"
     restore_console_loglevel
   else
-    # Keep ACTIVE to prevent a second helper racing a possibly stuck UDC unbind.
-    log "WARNING: keeping $ACTIVE marker because UDC unbind did not complete"
+    # Keep the frontend paused, and the active marker set, while host access
+    # may still be bound to the card. Removing REQUEST prevents re-launch loops.
+    rm -f "$REQUEST"
+    log "WARNING: keeping frontend pause and active markers because UDC unbind did not complete"
   fi
   log "storage mode ended; unbind_ok=$UNBIND_OK; diagnostic log saved when safe"
   if [ -d /mnt/boot ] && grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
@@ -399,9 +383,6 @@ cleanup() {
     sync
   fi
 }
-# A duplicate invocation must not tear down another live gadget.
-[ ! -e "$ACTIVE" ] || { log "another storage helper is active; refusing duplicate invocation"; exit 1; }
-: > "$ACTIVE"
 CLEANUP_TRIGGER=EXIT
 trap 'CLEANUP_TRIGGER=INT; exit 130' INT
 trap 'CLEANUP_TRIGGER=TERM; exit 143' TERM
