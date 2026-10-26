@@ -361,6 +361,7 @@ cleanup() {
 
   restore_console_loglevel
   log "storage mode ended; unbind_ok=$UNBIND_OK; configfs function retained for next entry"
+  /usr/bin/fbsplash 100 2>/dev/null || :
   # Persist logs only after the frontend is released; avoid a blocking sync
   # before returning to diagnostics.
   if [ -d /mnt/boot ] && grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
@@ -403,13 +404,12 @@ if [ "$BOOT_MODE" -eq 0 ]; then
   while [ ! -e "$PAUSED" ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i+1)); done
   if [ ! -e "$PAUSED" ]; then log "frontend did not pause; refusing to export a mounted filesystem"; exit 1; fi
 else
-  /usr/sbin/rg353ps-startup-prompt --usb-storage &
-  PROMPT_PID=$!
-  sleep 0.2
+  /usr/bin/baseos-splash --important -1 "STARTING USB STORAGE" 2>/dev/null || :
 fi
 sync
 if ! umount "$MOUNTPOINT"; then log "could not unmount $MOUNTPOINT; refusing to export"; exit 1; fi
 log "unmounted $MOUNTPOINT; preparing USB mass storage"
+/usr/bin/baseos-splash --important 45 "CONNECTING USB STORAGE" 2>/dev/null || :
 
 grep -q " $CONFIGFS " /proc/mounts 2>/dev/null || mount -t configfs none "$CONFIGFS" 2>/dev/null || {
   log "configfs mount failed"; exit 1;
@@ -759,6 +759,7 @@ while [ "$i" -lt 3600 ]; do
     configured)
       if [ "$seen" -eq 0 ]; then
         log "UDC reached successful enumeration state=configured after ${i}s"
+        /usr/bin/baseos-splash --important -1 "USB STORAGE: EJECT BEFORE UNPLUG" 2>/dev/null || :
       fi
       seen=1
       detached=0
