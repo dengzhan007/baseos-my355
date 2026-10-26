@@ -313,20 +313,27 @@ cleanup() {
     if [ -f "$unbind_result" ]; then
       unbind_rc="$(cat "$unbind_result" 2>/dev/null || echo 1)"
       wait "$unbind_pid" 2>/dev/null || :
+      if [ "$unbind_rc" -eq 0 ]; then
+        # Only read the binding after the write returned; sysfs reads are not
+        # allowed to hold cleanup hostage if the controller itself is wedged.
+        binding_after="$(cat "$G/UDC" 2>/dev/null || echo unreadable)"
+        if [ -z "$binding_after" ]; then
+          UNBIND_OK=1
+          BOUND=0
+          log "cleanup step=unbind complete write_rc=$unbind_rc binding=empty"
+        else
+          UNBIND_OK=0
+          log "ERROR: UDC still bound after successful unbind write: binding=$binding_after; will not remount shared data while gadget may still own it"
+        fi
+      else
+        UNBIND_OK=0
+        log "ERROR: UDC unbind sysfs write returned rc=$unbind_rc; preserving gadget state and leaving data unmounted"
+      fi
     else
       unbind_rc=124
-      log "WARNING: UDC unbind write did not return within 5 seconds (pid=$unbind_pid); abandoning waiter to keep cleanup from hanging"
-      kill "$unbind_pid" 2>/dev/null || :
-    fi
-    binding_after="$(cat "$G/UDC" 2>/dev/null || echo unreadable)"
-    state_after="$(cat "/sys/class/udc/$UDC/state" 2>/dev/null || echo unknown)"
-    if [ -z "$binding_after" ]; then
-      UNBIND_OK=1
-      BOUND=0
-      log "cleanup step=unbind complete write_rc=$unbind_rc state=$state_after binding=empty"
-    else
       UNBIND_OK=0
-      log "ERROR: UDC still bound after unbind attempt write_rc=$unbind_rc state=$state_after binding=$binding_after; will not remount shared data while gadget may still own it"
+      log "WARNING: UDC unbind write did not return within 5 seconds (pid=$unbind_pid); abandoning waiter and skipping follow-up UDC sysfs reads"
+      kill "$unbind_pid" 2>/dev/null || :
     fi
     rm -f "$unbind_result"
   elif [ -e "$G/UDC" ] && [ -z "$binding_before" ]; then
