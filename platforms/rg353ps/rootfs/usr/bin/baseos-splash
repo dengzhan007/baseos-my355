@@ -1,0 +1,8 @@
+#!/bin/sh
+# BaseOS-compatible framebuffer status pill. The full-screen logo is rendered
+# by fbsplash directly; status updates preserve the pixels beneath.
+[ "${1:-}" = "--important" ] || exit 2
+shift
+[ "$#" -ge 2 ] && [ -n "$2" ] || exit 2
+[ -x /usr/bin/fbsplash ] || exit 0
+exec /usr/bin/fbsplash "$@"
