@@ -50,7 +50,9 @@ log "BaseOS userspace initialized for RG353PS"
 # user-data partition has really been initialized and mounted. On a fresh image
 # the full-screen progress prompt stays visible while partition work runs.
 BOOT_STORAGE_MARKER=/mnt/boot/.baseos-userdata-v1
+FIRST_BOOT=0
 if [ ! -e "$BOOT_STORAGE_MARKER" ]; then
+  FIRST_BOOT=1
   /usr/bin/fbsplash 45 "EXPANDING STORAGE" 2>/dev/null || :
 fi
 
@@ -65,7 +67,7 @@ while :; do
   /usr/bin/fbsplash 45 "EXPANDING STORAGE" 2>/dev/null || :
 done
 
-/usr/bin/fbsplash 100 2>/dev/null || :
+if [ "$FIRST_BOOT" -eq 1 ]; then /usr/bin/fbsplash 100 2>/dev/null || :; fi
 
 # If Function/Mode was held at power-on, keep tty1's diagnostic/frontend
 # selector from starting until USB storage mode exits.
