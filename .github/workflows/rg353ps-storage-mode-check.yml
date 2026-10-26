@@ -5,6 +5,12 @@ on:
     branches: [rg353ps-port]
     paths:
       - "platforms/rg353ps/src/rg353ps-hotkeyd.c"
+      - "assets/boot.ttf"
+      - "src/fbsplash.c"
+      - "platforms/rg353ps/rootfs/usr/bin/baseos-splash"
+      - "platforms/rg353ps/build-image.sh"
+      - "platforms/rg353ps/rootfs/etc/init.d/rcS"
+      - "platforms/rg353ps/src/rg353ps-control-center.c"
       - "platforms/rg353ps/rootfs/usr/sbin/baseos-usb-storage"
       - "platforms/rg353ps/rootfs/usr/sbin/baseos-frontend-session"
       - "platforms/rg353ps/build-rootfs.sh"
@@ -32,6 +38,8 @@ jobs:
       - name: Check shell syntax
         run: |
           sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-usb-storage
+          sh -n platforms/rg353ps/rootfs/etc/init.d/rcS
+          sh -n platforms/rg353ps/rootfs/usr/bin/baseos-splash
           sh -n platforms/rg353ps/rootfs/usr/sbin/baseos-frontend-session
           sh -n platforms/rg353ps/build-rootfs.sh
           sh -n platforms/rg353ps/build-kernel.sh
