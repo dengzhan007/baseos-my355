@@ -46,9 +46,8 @@ fi
 
 log "BaseOS userspace initialized for RG353PS"
 
-# Do not let BusyBox init start tty1's frontend selector until the system card's
-# user-data partition has really been initialized and mounted. On a fresh image
-# the full-screen progress prompt stays visible while partition work runs.
+# Do not start the diagnostic UI until user storage has been initialized.
+# The BaseOS splash pill overlays the bootloader logo during first-boot work.
 BOOT_STORAGE_MARKER=/mnt/boot/.baseos-userdata-v1
 FIRST_BOOT=0
 if [ ! -e "$BOOT_STORAGE_MARKER" ]; then
@@ -69,7 +68,4 @@ done
 
 if [ "$FIRST_BOOT" -eq 1 ]; then /usr/bin/fbsplash 100 2>/dev/null || :; fi
 
-# If Function/Mode was held at power-on, keep tty1's diagnostic/frontend
-# selector from starting until USB storage mode exits.
-while [ -e /run/baseos-usb-storage.boot-request ]; do sleep 0.2; done
 
