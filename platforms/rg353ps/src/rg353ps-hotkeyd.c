@@ -272,10 +272,11 @@ static void discover_inputs(void) {
                 fn = fn || ((key_bits[KEY_FN / (sizeof(unsigned long) * 8)] &
                              (1UL << (KEY_FN % (sizeof(unsigned long) * 8)))) != 0);
 #endif
+                /* RG353PS physical Function key is reported as BTN_MODE (316). */
+                fn = fn || ((key_bits[BTN_MODE / (sizeof(unsigned long) * 8)] &
+                             (1UL << (BTN_MODE % (sizeof(unsigned long) * 8)))) != 0);
                 int mode = (key_bits[KEY_MODE / (sizeof(unsigned long) * 8)] &
                             (1UL << (KEY_MODE % (sizeof(unsigned long) * 8)))) != 0;
-                mode = mode || ((key_bits[BTN_MODE / (sizeof(unsigned long) * 8)] &
-                                 (1UL << (BTN_MODE % (sizeof(unsigned long) * 8)))) != 0);
                 mode = mode || ((key_bits[KEY_MENU / (sizeof(unsigned long) * 8)] &
                                  (1UL << (KEY_MENU % (sizeof(unsigned long) * 8)))) != 0);
                 function_down = function_down || fn;
@@ -333,12 +334,12 @@ static void handle_input(struct input_device *dev) {
             (void)snprintf(msg, sizeof(msg),
                 "KEY_EVENT device=%s code=%u value=%d%s%s",
                 dev->name, ev.code, ev.value,
-                (ev.code == KEY_F1 || ev.code == KEY_FN) ? " mapped=FUNCTION" :
-                (ev.code == KEY_MODE || ev.code == KEY_MENU || ev.code == BTN_MODE) ? " mapped=MODE" : "",
+                (ev.code == KEY_F1 || ev.code == KEY_FN || ev.code == BTN_MODE) ? " mapped=FUNCTION" :
+                (ev.code == KEY_MODE || ev.code == KEY_MENU) ? " mapped=MODE" : "",
                 down ? " state=DOWN" : " state=UP");
             log_message(msg);
-            if (ev.code == KEY_F1 || ev.code == KEY_FN) function_down = down;
-            if (ev.code == KEY_MODE || ev.code == KEY_MENU || ev.code == BTN_MODE) mode_down = down;
+            if (ev.code == KEY_F1 || ev.code == KEY_FN || ev.code == BTN_MODE) function_down = down;
+            if (ev.code == KEY_MODE || ev.code == KEY_MENU) mode_down = down;
         }
     }
     if(count<0&&errno!=EAGAIN&&errno!=EINTR) {
@@ -384,17 +385,27 @@ int main(void) {
             if (key_device_found && keys_first_seen_ms >= 0 &&
                 monotonic_ms() - keys_first_seen_ms >= 1500) {
                 char boot_msg[256];
-                (void)snprintf(boot_msg, sizeof(boot_msg),
-                    "BOOT_KEY_CHECK result=sampled key_device_found=1 function_down=%d mode_down=%d decision=NORMAL_BOOT",
-                    function_down, mode_down);
-                log_message(boot_msg);
                 startup_checked = 1;
                 startup_key_release_seen = !(function_down || mode_down);
                 {
                     int ready = open("/run/rg353ps-hotkeyd.ready", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
                     if (ready >= 0) close(ready);
                 }
-                log_message("boot-held Function/Mode no longer triggers USB storage; release key then hold Function and insert data cable");
+                if (function_down) {
+                    (void)snprintf(boot_msg, sizeof(boot_msg),
+                        "BOOT_KEY_CHECK result=sampled key_device_found=1 function_down=1 mode_down=%d decision=USB_STORAGE",
+                        mode_down);
+                    log_message(boot_msg);
+                    storage_latched = 1;
+                    (void)enter_usb_storage_mode(1);
+                    log_message("boot-triggered USB storage session returned; release Function before another trigger");
+                } else {
+                    (void)snprintf(boot_msg, sizeof(boot_msg),
+                        "BOOT_KEY_CHECK result=sampled key_device_found=1 function_down=0 mode_down=%d decision=NORMAL_BOOT",
+                        mode_down);
+                    log_message(boot_msg);
+                    log_message("normal boot; hold Function while powering on to enter USB storage, then connect the data cable when prompted");
+                }
             }
         }
         for(int i=0;i<input_count;++i) {
