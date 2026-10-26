@@ -229,7 +229,6 @@ snapshot() {
   [ ! -e "$G/UDC" ] || log "gadget UDC binding: $(cat "$G/UDC" 2>/dev/null)"
   [ ! -e "$G/functions/mass_storage.0/lun.0/file" ] || log "mass-storage backing file: $(cat "$G/functions/mass_storage.0/lun.0/file" 2>/dev/null)"
   # Record descriptor/configuration values while the gadget is still bound;
-  # the post-boot BASEOS-RUN.SH runs only after gadget cleanup.
   for attr in idVendor idProduct bcdUSB max_speed bDeviceClass bDeviceSubClass bDeviceProtocol bMaxPacketSize0; do
     read_usb_attr "$G/$attr"
   done
