@@ -484,12 +484,29 @@ else
     log "could not link mass-storage function"; exit 1;
   }
 fi
+# Enter storage mode first, then wait for the data cable. Keep the LUN
+# configured but do not bind the UDC until the PHY reports a PC data connection;
+# this avoids consuming the 45-second enumeration window before the user plugs in.
+/usr/bin/baseos-splash --important -1 "WAITING FOR DATA CABLE" 2>/dev/null || :
+log "storage mode ready; waiting up to 3600 seconds for DC data cable before binding UDC"
+i=0
+while ! is_data_cable_connected && [ "$i" -lt 3600 ]; do
+  if [ "$i" -eq 0 ] || [ $((i % 10)) -eq 0 ]; then
+    log "waiting for data cable elapsed=${i}s"
+    dump_usb_status
+  fi
+  sleep 1
+  i=$((i+1))
+done
+if ! is_data_cable_connected; then
+  log "data cable was not detected within 3600 seconds; restoring local mount"
+  exit 1
+fi
+log "data cable detected after ${i}s; binding USB gadget"
+/usr/bin/baseos-splash --important 45 "CONNECTING USB STORAGE" 2>/dev/null || :
 snapshot "immediately-before-bind"
 if ! printf '%s' "$UDC" > "$G/UDC"; then log "could not bind USB controller $UDC"; exit 1; fi
 BOUND=1
-# BaseOS is a minimal BusyBox system (no udev daemon). ROCKNIX normally
-# re-runs this RK3566 workaround on extcon change; mount debugfs and poll here
-# instead so a cable plugged in after the on-screen prompt is handled too.
 grep -q " /sys/kernel/debug " /proc/mounts 2>/dev/null ||
   mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || :
 sleep 1
@@ -498,9 +515,8 @@ snapshot "one-second-after-bind"
 SESSION_WRITE_SECTORS="$(awk '$3 == "mmcblk0p3" {print $10; exit}' /proc/diskstats 2>/dev/null)"
 log "USB mass storage active for $DEVICE; session-start sectors_written_baseline=${SESSION_WRITE_SECTORS:-unknown}; unplug cable to return to BaseOS"
 
-# A controller that never leaves "not attached" cannot reliably detect
-# cable removal. Do not leave the data partition unmounted indefinitely:
-# wait up to 45 seconds for first attachment, then safely unbind and remount.
+# After the data cable is detected and the gadget is bound, allow 45 seconds
+# for Windows to finish enumeration before restoring the local mount on failure.
 seen=0
 detached=0
 LAST_RESET_STATE=
