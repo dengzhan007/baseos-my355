@@ -53,7 +53,7 @@ static const char *menu_items[] = {
     "Wi-Fi status",
     "System and power information",
     "Control mapping help",
-    "Linux command-line shell (root)"
+    "USB mass-storage mode (connect data cable)"
 };
 #define MENU_COUNT ((int)(sizeof(menu_items) / sizeof(menu_items[0])))
 
@@ -209,8 +209,7 @@ static void render_home(void)
     printf("  Volume +/- keys adjust RK817 playback level.\n");
     printf("  Short Power press shows system information.\n");
     printf("  Hold Power for 2 seconds to shut down cleanly.\n");
-    printf("\n  Select the Linux command-line shell menu entry to run commands/scripts.\n");
-    printf("  Serial console remains available on ttyS2 for shell/debug access.\n");
+    printf("  USB storage: select the last item, then connect the PC data cable.\n");
 }
 
 static void render_controls(void)
@@ -299,8 +298,7 @@ static void render_help(void)
     printf("  Power button      Short press opens system information\n");
     printf("  FUNCTION          Toggle the live controller monitor\n");
     printf("\n  This step verifies physical-to-kernel input mapping and screen response.\n");
-    printf("  Select \"Linux command-line shell\" to run commands and scripts.\n");
-    printf("  The shell runs as root; type exit to return to this frontend.\n");
+    printf("  USB storage: select the last item, or hold FUNCTION and plug in the data cable.\n");
     printf("  Emulation hotkeys, ROM browsing and game launching are not implemented.\n");
     printf("\n  B (bottom / BTN_SOUTH) returns to menu.\n");
 }
@@ -329,105 +327,6 @@ static void navigate_menu(int delta)
     if (current_screen == SCREEN_HOME) render();
 }
 
-static void launch_shell(void)
-{
-    pid_t child;
-    pid_t frontend_pgrp = getpgrp();
-    int status = 0;
-    int wait_ok = 1;
-
-    if (termios_saved &&
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved_termios) != 0) {
-        (void)snprintf(last_event, sizeof(last_event),
-                       "Warning: could not restore terminal mode before shell");
-    }
-
-    (void)printf("\033[0m\033[?25h\033[2J\033[H");
-    (void)printf("BaseOS RG353PS command-line shell (root)\n");
-    (void)printf("Type 'exit' to return to the diagnostic frontend.\n");
-    (void)printf("To run a script: sh /path/to/script.sh\n");
-    (void)printf("Be careful: commands run with root privileges.\n\n");
-    fflush(stdout);
-
-    if (!isatty(STDIN_FILENO)) {
-        (void)snprintf(last_event, sizeof(last_event),
-                       "Shell unavailable: frontend stdin is not a TTY");
-        current_screen = SCREEN_HOME;
-        render();
-        return;
-    }
-
-    child = fork();
-    if (child < 0) {
-        (void)snprintf(last_event, sizeof(last_event),
-                       "Could not start shell: %s", strerror(errno));
-    } else if (child == 0) {
-        /* The frontend handles signals to exit its event loop.
-         * The interactive shell must receive normal terminal signals. */
-        (void)signal(SIGINT, SIG_DFL);
-        (void)signal(SIGTERM, SIG_DFL);
-        (void)signal(SIGHUP, SIG_DFL);
-        (void)signal(SIGQUIT, SIG_DFL);
-        (void)signal(SIGTSTP, SIG_DFL);
-        execl("/bin/sh", "sh", "-i", (char *)NULL);
-        perror("exec /bin/sh");
-        _exit(127);
-    } else {
-        while (waitpid(child, &status, 0) < 0) {
-            if (errno == EINTR) continue;
-            wait_ok = 0;
-            break;
-        }
-        if (!wait_ok) {
-            (void)snprintf(last_event, sizeof(last_event),
-                           "Shell ended; waitpid failed: %s", strerror(errno));
-        } else if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-            (void)snprintf(last_event, sizeof(last_event),
-                           "Shell exited with status %d", WEXITSTATUS(status));
-        } else if (WIFSIGNALED(status)) {
-            (void)snprintf(last_event, sizeof(last_event),
-                           "Shell terminated by signal %d", WTERMSIG(status));
-        } else {
-            (void)snprintf(last_event, sizeof(last_event),
-                           "Returned from command-line shell");
-        }
-    }
-
-    /*
-     * An interactive shell may put itself in a separate foreground process
-     * group for job control. Reclaim the tty before the frontend resumes
-     * reading input; ignore SIGTTOU while changing the foreground pgrp from
-     * the frontend's now-background process group.
-     */
-    if (isatty(STDIN_FILENO)) {
-        pid_t foreground_pgrp = tcgetpgrp(STDIN_FILENO);
-        if (foreground_pgrp >= 0 && foreground_pgrp != frontend_pgrp) {
-            struct sigaction ignore_action;
-            struct sigaction old_action;
-            memset(&ignore_action, 0, sizeof(ignore_action));
-            ignore_action.sa_handler = SIG_IGN;
-            (void)sigemptyset(&ignore_action.sa_mask);
-            if (sigaction(SIGTTOU, &ignore_action, &old_action) == 0) {
-                (void)tcsetpgrp(STDIN_FILENO, frontend_pgrp);
-                (void)sigaction(SIGTTOU, &old_action, NULL);
-            }
-        }
-    }
-
-    /* Restore the frontend's raw input mode after the shell exits. */
-    if (termios_saved) {
-        struct termios raw = saved_termios;
-        raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);
-        raw.c_iflag &= (tcflag_t)~(IXON | ICRNL);
-        raw.c_cc[VMIN] = 0;
-        raw.c_cc[VTIME] = 0;
-        (void)tcflush(STDIN_FILENO, TCIFLUSH);
-        (void)tcsetattr(STDIN_FILENO, TCSANOW, &raw);
-    }
-    current_screen = SCREEN_HOME;
-    render();
-}
-
 static void select_menu_item(void)
 {
     switch (selected_item) {
@@ -436,9 +335,19 @@ static void select_menu_item(void)
     case 2: current_screen = SCREEN_WIFI; break;
     case 3: current_screen = SCREEN_SYSTEM; break;
     case 4: current_screen = SCREEN_HELP; break;
-    case 5:
-        launch_shell();
+    case 5: {
+        pid_t child = fork();
+        if (child == 0) {
+            execl("/usr/sbin/baseos-usb-storage", "baseos-usb-storage", (char *)NULL);
+            _exit(127);
+        }
+        if (child < 0)
+            (void)snprintf(last_event, sizeof(last_event), "Could not request USB storage mode");
+        else
+            (void)snprintf(last_event, sizeof(last_event), "USB storage requested; waiting for safe frontend shutdown");
+        render();
         return;
+    }
     default: current_screen = SCREEN_HOME; break;
     }
     render();
