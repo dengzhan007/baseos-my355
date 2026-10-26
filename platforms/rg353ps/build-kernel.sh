@@ -367,7 +367,7 @@ if len(vbus_matches) == 1:
         log_line = (
             "\tif (rport->mode != USB_DR_MODE_PERIPHERAL ||\n"
             "\t    (++rg353ps_peripheral_samples % 5) == 1)\n"
-            "\t\tdev_info(&rport->phy->dev, \"" + vbus_format
+            "\t\tdev_dbg(&rport->phy->dev, \"" + vbus_format
             + "\", rport->mode, rport->state, vbus_attach, rport->suspended, "
             + "rphy->edev ? extcon_get_state(rphy->edev, EXTCON_USB_HOST) : -ENODEV);\n"
         )
@@ -565,7 +565,7 @@ elif text.count(early_new) != 1:
 
 inject_function(
     "static void rockchip_usb2phy_otg_sm_work(",
-    "\tdev_info(&container_of(work, struct rockchip_usb2phy_port, otg_sm_work.work)->phy->dev, \"RG353PS OTG state-machine entry\\\\n\");",
+    "\tdev_dbg(&container_of(work, struct rockchip_usb2phy_port, otg_sm_work.work)->phy->dev, \"RG353PS OTG state-machine entry\\\\n\");",
     "RG353PS OTG state-machine entry",
 )
 
