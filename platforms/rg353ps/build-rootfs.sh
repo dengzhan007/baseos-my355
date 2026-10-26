@@ -34,6 +34,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
   -v "$WORK":/work \
   -v "$HERE/rootfs":/rootfs-src:ro \
   -v "$HERE/src":/src:ro \
+  -v "$REPO_ROOT/src":/baseos-src:ro \
   -v "$REPO_ROOT/assets":/assets:ro \
   -e KREL="$KREL" \
   alpine:3.22 sh -euc '
@@ -92,7 +93,7 @@ docker run --rm --platform "$BASEOS_DOCKER_PLATFORM_AARCH64" \
     # USB-storage UI needs no extra runtime libraries.
     mkdir -p "$R/usr/share/baseos"
     gcc -static -O2 $(pkg-config --cflags freetype2) \
-      -o "$R/usr/bin/fbsplash" /src/fbsplash.c $(pkg-config --static --libs freetype2)
+      -o "$R/usr/bin/fbsplash" /baseos-src/fbsplash.c $(pkg-config --static --libs freetype2)
     strip "$R/usr/bin/fbsplash"
     cp /assets/boot.ttf "$R/usr/share/baseos/boot.ttf"
     test -x "$R/usr/bin/fbsplash" || { echo "BaseOS fbsplash was not built" >&2; exit 1; }
