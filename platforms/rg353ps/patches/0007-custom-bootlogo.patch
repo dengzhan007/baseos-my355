@@ -15,7 +15,7 @@ will render the image after mounting /mnt/SDCARD.
 diff --git a/configs/anbernic-rgxx3-rk3566_defconfig b/configs/anbernic-rgxx3-rk3566_defconfig
 --- a/configs/anbernic-rgxx3-rk3566_defconfig
 +++ b/configs/anbernic-rgxx3-rk3566_defconfig
-@@ -90,0 +91,5 @@
+@@ -90,0 +91,6 @@
 +CONFIG_BMP=y
 +CONFIG_BMP_24BPP=y
 +CONFIG_SPLASH_SCREEN=y
