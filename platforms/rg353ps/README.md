@@ -145,6 +145,8 @@ YM12 frame to `/dev/video1`, captures the JPEG output, and checks the start/end
 markers. A pass confirms a plausible bitstream was produced, but does not
 replace decoding/viewing the image or longer-duration testing.
 
+To inspect suspend and wakeup support without changing power state, run `/usr/sbin/rg353ps-suspend-audit`. It writes a timestamped report to `BASEOS_BOOT` (`/mnt/boot`) when writable, otherwise `/tmp`. This is a read-only capability inventory: it records `/sys/power/state`, `mem_sleep`, per-device wakeup attributes, input/power-key devices, CPU idle states, battery/RTC data, and relevant kernel messages. It deliberately does **not** attempt suspend or write to `/sys/power/state`; a later hardware test must be a separate, explicitly triggered step with a verified wake source.
+
 For the next hardware pass, run `/usr/sbin/rg353ps-hardware-audit`. It creates
 a read-only inventory of display/backlight, input devices, audio, battery and
 thermal sensors, storage, network, Bluetooth/USB, V4L2 formats/compliance, and
