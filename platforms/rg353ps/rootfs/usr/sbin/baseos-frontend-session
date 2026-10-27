@@ -345,6 +345,21 @@ kill_tree() {
 /bin/sh "$LAUNCHER" &
 FRONTEND_PID=$!
 while kill -0 "$FRONTEND_PID" 2>/dev/null; do
+  # One-shot, opt-in first-stage suspend test. This runs only after a frontend
+  # has launched, so its process tree can be checked after resume. Never run
+  # while the shared card is being exported or the frontend is being unmounted.
+  SUSPEND_TEST_MARKER=/mnt/boot/BASEOS-SUSPEND-TEST-S2IDLE
+  if [ -e "$SUSPEND_TEST_MARKER" ] && [ -x /usr/sbin/rg353ps-suspend-test ]; then
+    if rm -f "$SUSPEND_TEST_MARKER" 2>/dev/null && [ ! -e "$SUSPEND_TEST_MARKER" ]; then
+      sync
+      log "one-shot s2idle suspend/resume test requested"
+      /usr/sbin/rg353ps-suspend-test s2idle
+      suspend_test_rc=$?
+      log "suspend/resume test helper returned exit=$suspend_test_rc"
+    else
+      log "suspend test request could not be consumed; refusing to suspend"
+    fi
+  fi
   if [ -e /run/baseos-usb-storage.request ]; then
     log "USB storage requested; stopping frontend before unmount"
     kill_tree TERM "$FRONTEND_PID"
