@@ -34,11 +34,11 @@ diff --git a/include/configs/anbernic-rgxx3-rk3566.h b/include/configs/anbernic-
  #define __ANBERNIC_RGXX3_RK3566_H
  
  #define ROCKCHIP_DEVICE_SETTINGS \
--			"stdout=serial,vidconsole\\0" \
--			"stderr=serial,vidconsole\\0"
-+			"stdout=serial\\0" \
-+			"stderr=serial\\0" \
-+			"silent=1\\0"
+-			"stdout=serial,vidconsole\0" \
+-			"stderr=serial,vidconsole\0"
++			"stdout=serial\0" \
++			"stderr=serial\0" \
++			"silent=1\0"
  
  #include <configs/rk3568_common.h>
  
