@@ -100,6 +100,7 @@ sleep 1
 sync
 log "Entering s2idle now. A short press of the physical power button should wake the device."
 log "If the device does not wake, this report's pre-suspend section has already been flushed."
+sync
 
 if printf 'mem\n' > /sys/power/state 2>> "$REPORT"; then
   SUSPEND_RC=0
