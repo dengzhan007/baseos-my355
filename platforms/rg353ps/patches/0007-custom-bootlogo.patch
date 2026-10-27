@@ -9,8 +9,8 @@ will render the image after mounting /mnt/SDCARD.
 ---
  configs/anbernic-rgxx3-rk3566_defconfig |  5 +++++
  common/splash.c                         |  3 ++-
- common/splash_source.c                  |  4 +++-
- 3 files changed, 9 insertions(+), 4 deletions(-)
+ common/splash_source.c                  |  6 ++++--
+ 3 files changed, 9 insertions(+), 7 deletions(-)
 
 diff --git a/configs/anbernic-rgxx3-rk3566_defconfig b/configs/anbernic-rgxx3-rk3566_defconfig
 --- a/configs/anbernic-rgxx3-rk3566_defconfig
@@ -46,7 +46,7 @@ diff --git a/common/splash_source.c b/common/splash_source.c
  	if (!splash_file)
 -		splash_file = SPLASH_SOURCE_DEFAULT_FILE_NAME;
 +		splash_file = "bootlogo/bootlogo.bmp";
-@@ -444,5 +444,3 @@
+@@ -444,5 +444,2 @@
  	env_splashimage_value = env_get("splashimage");
 -	if (env_splashimage_value == NULL)
 -		return -ENOENT;
