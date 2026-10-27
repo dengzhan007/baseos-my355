@@ -62,23 +62,36 @@ static void flush_staged_log(void) {
     int in_fd, out_fd;
     char buf[1024];
     ssize_t n;
-    if (sd_log_active || !userdata_is_mounted()) return;
+    if (!userdata_is_mounted()) return;
+
     in_fd = open(BOOT_LOG_STAGE, O_RDONLY | O_CLOEXEC);
-    /* Start a fresh, compact report for this boot rather than accumulating logs forever. */
-    out_fd = open(BOOT_LOG_FINAL, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-    if (out_fd < 0) { if (in_fd >= 0) close(in_fd); return; }
-    if (in_fd >= 0) {
-        while ((n = read(in_fd, buf, sizeof(buf))) > 0) {
-            ssize_t off = 0;
-            while (off < n) {
-                ssize_t w = write(out_fd, buf + off, (size_t)(n - off));
-                if (w < 0) { if (errno == EINTR) continue; break; }
-                off += w;
-            }
+    if (in_fd < 0) {
+        if (sd_log_active) return;
+        /* Start a fresh, compact report for this boot even if there was no
+           pre-mount message to flush. */
+        out_fd = open(BOOT_LOG_FINAL, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (out_fd >= 0) {
+            (void)close(out_fd);
+            sd_log_active = 1;
         }
-        (void)close(in_fd);
+        return;
     }
+    /* First mount truncates the prior boot's report; after an unmount, staged
+       messages are appended when BASEOS_DATA is mounted again. */
+    out_fd = open(BOOT_LOG_FINAL, O_WRONLY | O_CREAT |
+                  (sd_log_active ? O_APPEND : O_TRUNC) | O_CLOEXEC, 0644);
+    if (out_fd < 0) { (void)close(in_fd); return; }
+    while ((n = read(in_fd, buf, sizeof(buf))) > 0) {
+        ssize_t off = 0;
+        while (off < n) {
+            ssize_t w = write(out_fd, buf + off, (size_t)(n - off));
+            if (w < 0) { if (errno == EINTR) continue; break; }
+            off += w;
+        }
+    }
+    (void)close(in_fd);
     (void)close(out_fd);
+    (void)unlink(BOOT_LOG_STAGE);
     sd_log_active = 1;
 }
 
@@ -96,6 +109,7 @@ static int keep_persistent_log_message(const char *message) {
         strstr(message, "boot storage gate") != NULL ||
         strstr(message, "entering USB storage mode") != NULL ||
         strstr(message, "USB storage mode finished") != NULL ||
+        strstr(message, "USB storage helper exited") != NULL ||
         strstr(message, "boot-triggered USB storage session returned") != NULL ||
         strstr(message, "read error") != NULL ||
         strstr(message, "poll failed") != NULL ||
@@ -117,7 +131,10 @@ static void log_message(const char *message) {
         (void)close(fd);
     }
     if (n > 0 && keep_persistent_log_message(message)) {
-        const char *path = sd_log_active ? BOOT_LOG_FINAL : BOOT_LOG_STAGE;
+        /* BASEOS_DATA is deliberately unmounted while it is exported over USB.
+           Never write through the now-unmounted /mnt/SDCARD mountpoint into
+           the system rootfs; stage those messages in tmpfs and flush on return. */
+        const char *path = userdata_is_mounted() ? BOOT_LOG_FINAL : BOOT_LOG_STAGE;
         fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
         if (fd >= 0) {
             (void)write(fd, line, (size_t)n < sizeof(line) ? (size_t)n : sizeof(line)-1);
@@ -219,7 +236,23 @@ static int enter_usb_storage_mode(int boot_mode) {
         return 0;
     }
     log_message("USB storage mode finished");
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (WIFEXITED(status)) {
+        char result_msg[128];
+        int exit_status = WEXITSTATUS(status);
+        (void)snprintf(result_msg, sizeof(result_msg),
+                       "USB storage helper exited status=%d", exit_status);
+        log_message(result_msg);
+        return exit_status == 0;
+    }
+    if (WIFSIGNALED(status)) {
+        char result_msg[128];
+        (void)snprintf(result_msg, sizeof(result_msg),
+                       "USB storage helper exited by signal=%d", WTERMSIG(status));
+        log_message(result_msg);
+    } else {
+        log_message("USB storage helper exited without a normal process status");
+    }
+    return 0;
 }
 static int already_open(const char *path) {
     for (int i=0; i<input_count; ++i)
@@ -430,9 +463,16 @@ int main(void) {
                         mode_down);
                     log_message(boot_msg);
                     storage_latched = 1;
-                    (void)enter_usb_storage_mode(1);
-                    (void)unlink(BOOT_STORAGE_REQUEST);
-                    log_message("boot-triggered USB storage session returned; boot storage gate cleared");
+                    if (enter_usb_storage_mode(1)) {
+                        (void)unlink(BOOT_STORAGE_REQUEST);
+                        log_message("boot-triggered USB storage session returned successfully; boot storage gate cleared");
+                    } else {
+                        /* Do not silently launch the frontend over a failed
+                           Function-triggered storage attempt. The failure
+                           stays visible and the user can retry by reconnecting
+                           the cable with Function held, or reboot normally. */
+                        log_message("boot-triggered USB storage failed; keeping boot storage gate active to prevent frontend launch");
+                    }
                 } else {
                     (void)snprintf(boot_msg, sizeof(boot_msg),
                         "BOOT_KEY_CHECK result=sampled key_device_found=1 function_down=0 mode_down=%d decision=NORMAL_BOOT",
