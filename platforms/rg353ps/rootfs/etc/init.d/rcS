@@ -13,20 +13,32 @@ mount -t tmpfs -o mode=1777 tmpfs /tmp 2>/dev/null || :
 echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null || :
 /sbin/mdev -s 2>/dev/null || :
 
+# Hide the virtual-terminal cursor; fbsplash writes pixels but does not own
+# the kernel console cursor. The frontend supervisor restores it on exit.
+printf '\033[?25l' > /dev/tty1 2>/dev/null || :
+
 log() { printf '%s\n' "$*" > /dev/kmsg 2>/dev/null || :; }
 BOOT_USB_REQUEST=/run/baseos-usb-storage.boot-request
 
-# Start key sampling immediately, but render the logo before the slower
-# storage and optional-module setup. This prevents the boot cursor from being
-# the only visible content while userspace initializes.
+# Start key sampling immediately, then retry the logo briefly while fb0 is
+# being registered. Once Function requests storage, the USB helper owns the
+# display and no later logo redraw may cover its instructions.
 rm -f /run/rg353ps-hotkeyd.ready "$BOOT_USB_REQUEST"
 /usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
 echo $! > /run/rg353ps-hotkeyd.pid
 BOOT_LOGO_DRAWN=0
 if [ -x /usr/bin/fbsplash ]; then
-  if /usr/bin/fbsplash 0 >/dev/null 2>&1; then
-    BOOT_LOGO_DRAWN=1
-  else
+  logo_wait=0
+  while [ "$logo_wait" -lt 25 ]; do
+    [ -e "$BOOT_USB_REQUEST" ] && break
+    if /usr/bin/fbsplash 0 >/dev/null 2>&1; then
+      BOOT_LOGO_DRAWN=1
+      break
+    fi
+    sleep 0.1
+    logo_wait=$((logo_wait+1))
+  done
+  if [ "$BOOT_LOGO_DRAWN" -eq 0 ] && [ ! -e "$BOOT_USB_REQUEST" ]; then
     log "NOTICE: framebuffer not ready for early boot logo; will retry after hardware setup"
   fi
 fi
@@ -40,10 +52,12 @@ while [ ! -e /run/rg353ps-hotkeyd.ready ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$(
 
 /usr/sbin/baseos-mount-storage
 
-# Keep only the current boot's userdata-init report on the boot partition.
+# Successful userdata initialization is routine; keep its trace in tmpfs and
+# persist a copy on BASEOS_BOOT only if the initialization loop fails.
 if grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
-  : > /mnt/boot/baseos-userdata-init.txt 2>/dev/null || :
+  rm -f /mnt/boot/baseos-userdata-init.txt 2>/dev/null || :
 fi
+: > /tmp/baseos-userdata-init.txt 2>/dev/null || :
 
 # Keep boot diagnostics in the kernel ring buffer, not on the handheld screen.
 dmesg -n 1 2>/dev/null || :
@@ -67,7 +81,8 @@ log "BaseOS userspace initialized for RG353PS"
 # Retry only if the early draw ran before the framebuffer was ready.
 # Never repaint a successful early logo here: the boot-key daemon may already
 # be presenting the USB-storage status pill.
-if [ "$BOOT_LOGO_DRAWN" -eq 0 ] && [ -x /usr/bin/fbsplash ]; then
+if [ "$BOOT_LOGO_DRAWN" -eq 0 ] && [ -x /usr/bin/fbsplash ] && \
+   [ ! -e "$BOOT_USB_REQUEST" ]; then
   /usr/bin/fbsplash 0 >/dev/null 2>&1 || log "WARNING: unable to render boot logo"
 fi
 
@@ -90,6 +105,9 @@ while :; do
   /usr/sbin/baseos-init-userdata
   if grep -q " /mnt/SDCARD " /proc/mounts && [ -e "$BOOT_STORAGE_MARKER" ]; then
     break
+  fi
+  if grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
+    cp /tmp/baseos-userdata-init.txt /mnt/boot/baseos-userdata-init.txt 2>/dev/null || :
   fi
   if [ "$SHOW_STARTUP_STATUS" -eq 1 ]; then
     /usr/bin/fbsplash -1 "STORAGE INITIALIZATION FAILED" 2>/dev/null || :
