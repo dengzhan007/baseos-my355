@@ -5,6 +5,7 @@ on:
     branches: [rg353ps-port]
     paths:
       - "platforms/rg353ps/**"
+      - "src/fbsplash.c"
       - "tools/common.sh"
       - ".github/workflows/rg353ps-uboot.yml"
   pull_request:
