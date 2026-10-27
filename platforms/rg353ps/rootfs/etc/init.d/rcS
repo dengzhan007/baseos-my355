@@ -64,14 +64,6 @@ fi
 
 log "BaseOS userspace initialized for RG353PS"
 
-# Retry only if the early draw ran before the framebuffer was ready.
-# Never repaint a successful early logo here: the boot-key daemon may already
-# be presenting the USB-storage status pill.
-if [ "$BOOT_LOGO_DRAWN" -eq 0 ] && \
-   [ -x /usr/bin/fbsplash ] && [ ! -e "$BOOT_USB_REQUEST" ]; then
-  BASEOS_CUSTOM_SPLASH_ONLY=1 /usr/bin/fbsplash 0 >/dev/null 2>&1 || log "WARNING: unable to render custom boot logo"
-fi
-
 # Do not start the diagnostic UI until user storage has been initialized.
 # The status pill overlays the selected full-screen background during first-boot work.
 BOOT_STORAGE_MARKER=/mnt/boot/.baseos-userdata-v1
