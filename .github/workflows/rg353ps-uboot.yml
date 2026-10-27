@@ -54,6 +54,8 @@ jobs:
           sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-v4l2-report
           sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-jpeg-encode-test
           sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-hardware-audit
+          sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-suspend-audit
+          sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-suspend-test
           sh -n platforms/rg353ps/rootfs/usr/sbin/rg353ps-graphics-stack-test
           sh -n platforms/rg353ps/frontends/slot/launch.sh
           sh -n platforms/rg353ps/build-slot.sh
