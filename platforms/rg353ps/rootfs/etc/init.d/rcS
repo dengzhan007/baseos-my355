@@ -14,11 +14,12 @@ echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null || :
 /sbin/mdev -s 2>/dev/null || :
 
 log() { printf '%s\n' "$*" > /dev/kmsg 2>/dev/null || :; }
+BOOT_USB_REQUEST=/run/baseos-usb-storage.boot-request
 
 # Start key sampling immediately, but render the logo before the slower
 # storage and optional-module setup. This prevents the boot cursor from being
 # the only visible content while userspace initializes.
-rm -f /run/rg353ps-hotkeyd.ready /run/baseos-usb-storage.boot-request
+rm -f /run/rg353ps-hotkeyd.ready "$BOOT_USB_REQUEST"
 /usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
 echo $! > /run/rg353ps-hotkeyd.pid
 BOOT_LOGO_DRAWN=0
@@ -40,7 +41,9 @@ while [ ! -e /run/rg353ps-hotkeyd.ready ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$(
 /usr/sbin/baseos-mount-storage
 
 # Keep only the current boot's userdata-init report on the boot partition.
-: > /mnt/boot/baseos-userdata-init.txt 2>/dev/null || :
+if grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
+  : > /mnt/boot/baseos-userdata-init.txt 2>/dev/null || :
+fi
 
 # Keep boot diagnostics in the kernel ring buffer, not on the handheld screen.
 dmesg -n 1 2>/dev/null || :
@@ -72,9 +75,15 @@ fi
 # The BaseOS splash pill overlays the bootloader logo during first-boot work.
 BOOT_STORAGE_MARKER=/mnt/boot/.baseos-userdata-v1
 FIRST_BOOT=0
+SHOW_STARTUP_STATUS=1
+# During a Function-triggered storage boot, the USB helper owns the display
+# once it starts; unrelated first-boot pills must not cover its instructions.
+if [ -e "$BOOT_USB_REQUEST" ]; then SHOW_STARTUP_STATUS=0; fi
 if [ ! -e "$BOOT_STORAGE_MARKER" ]; then
   FIRST_BOOT=1
-  /usr/bin/fbsplash 45 "EXPANDING STORAGE" 2>/dev/null || :
+  if [ "$SHOW_STARTUP_STATUS" -eq 1 ]; then
+    /usr/bin/fbsplash 45 "EXPANDING STORAGE" 2>/dev/null || :
+  fi
 fi
 
 while :; do
@@ -82,12 +91,18 @@ while :; do
   if grep -q " /mnt/SDCARD " /proc/mounts && [ -e "$BOOT_STORAGE_MARKER" ]; then
     break
   fi
-  /usr/bin/fbsplash -1 "STORAGE INITIALIZATION FAILED" 2>/dev/null || :
+  if [ "$SHOW_STARTUP_STATUS" -eq 1 ]; then
+    /usr/bin/fbsplash -1 "STORAGE INITIALIZATION FAILED" 2>/dev/null || :
+  fi
   log "User storage is not ready; retrying initialization"
   sleep 2
-  /usr/bin/fbsplash 45 "EXPANDING STORAGE" 2>/dev/null || :
+  if [ "$SHOW_STARTUP_STATUS" -eq 1 ]; then
+    /usr/bin/fbsplash 45 "EXPANDING STORAGE" 2>/dev/null || :
+  fi
 done
 
-if [ "$FIRST_BOOT" -eq 1 ]; then /usr/bin/fbsplash 100 2>/dev/null || :; fi
+if [ "$FIRST_BOOT" -eq 1 ] && [ "$SHOW_STARTUP_STATUS" -eq 1 ]; then
+  /usr/bin/fbsplash 100 2>/dev/null || :
+fi
 
 
