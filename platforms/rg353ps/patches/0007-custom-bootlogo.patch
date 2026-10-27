@@ -13,7 +13,7 @@ console output. Linux draws the BaseOS splash after userspace starts.
  configs/anbernic-rgxx3-rk3566_defconfig | 7 +++++++
  include/configs/anbernic-rgxx3-rk3566.h | 3 ++-
  drivers/video/video-uclass.c            | 6 +++---
- 3 files changed, 12 insertions(+), 4 deletions(-)
+ 3 files changed, 11 insertions(+), 7 deletions(-)
 
 diff --git a/configs/anbernic-rgxx3-rk3566_defconfig b/configs/anbernic-rgxx3-rk3566_defconfig
 --- a/configs/anbernic-rgxx3-rk3566_defconfig
@@ -45,7 +45,7 @@ diff --git a/include/configs/anbernic-rgxx3-rk3566.h b/include/configs/anbernic-
 diff --git a/drivers/video/video-uclass.c b/drivers/video/video-uclass.c
 --- a/drivers/video/video-uclass.c
 +++ b/drivers/video/video-uclass.c
-@@ -595,10 +595,8 @@ static int show_splash(struct udevice *dev)
+@@ -596,8 +596,4 @@ static int show_splash(struct udevice *dev)
  {
 -	u8 *data = SPLASH_START(u_boot_logo);
 -	int ret;
