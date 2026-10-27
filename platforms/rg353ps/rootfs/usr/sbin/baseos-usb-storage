@@ -361,7 +361,7 @@ cleanup() {
   restore_console_loglevel
   log "storage mode ended; unbind_ok=$UNBIND_OK; configfs function retained for next entry"
   if [ "$cleanup_status" -eq 0 ]; then
-    /usr/bin/fbsplash 100 2>/dev/null || :
+    /usr/bin/baseos-splash --important 100 "USB STORAGE FINISHED" 2>/dev/null || :
   else
     # Do not erase the failure state with the normal boot logo; hotkeyd keeps
     # the boot-storage gate active so the frontend cannot hide this error.
@@ -411,8 +411,15 @@ if [ "$BOOT_MODE" -eq 0 ]; then
 else
   :
 fi
-/usr/bin/fbsplash 0 2>/dev/null || :
-/usr/bin/baseos-splash --important -1 "STARTING USB STORAGE" 2>/dev/null || :
+# Diagnostic UI may re-enable the virtual-terminal cursor after rcS hid it.
+# Hide it again on the active VT and tty1 before drawing the storage prompt.
+for console in /dev/tty0 /dev/tty1; do
+  printf '\033[?25l' > "$console" 2>/dev/null || :
+done
+# Do not call "fbsplash 0" here: it paints BaseOS's built-in full-screen art
+# over the bootloader logo, breaking NextUI's custom boot-logo selection.
+# The status pill preserves the underlying U-Boot/NextUI logo.
+ /usr/bin/baseos-splash --important -1 "STARTING USB STORAGE" 2>/dev/null || :
 sync
 if ! umount "$MOUNTPOINT"; then log "could not unmount $MOUNTPOINT; refusing to export"; exit 1; fi
 log "unmounted $MOUNTPOINT; preparing USB mass storage"
