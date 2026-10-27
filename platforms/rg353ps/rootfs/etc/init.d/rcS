@@ -26,29 +26,11 @@ BOOT_USB_REQUEST=/run/baseos-usb-storage.boot-request
 rm -f /run/rg353ps-hotkeyd.ready "$BOOT_USB_REQUEST"
 /usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
 echo $! > /run/rg353ps-hotkeyd.pid
-# U-Boot deliberately clears its inherited framebuffer to black.
-# Draw the Linux-stage BaseOS artwork here instead of preserving stale pixels.
+# Do not draw the built-in artwork before BASEOS_DATA is mounted.
+# fbsplash automatically prefers /mnt/SDCARD/bootlogo/bootlogo.bmp when it
+# exists; drawing before the mount caused a visible built-in-logo -> custom-logo
+# transition on every boot.
 BOOT_LOGO_DRAWN=0
-if [ -x /usr/bin/fbsplash ]; then
-  # DRM/framebuffer registration can lag userspace startup. Retry briefly,
-  # but stop immediately if Function has requested USB storage mode.
-  logo_wait=0
-  while [ "$logo_wait" -lt 25 ]; do
-    [ -e "$BOOT_USB_REQUEST" ] && break
-    if /usr/bin/fbsplash 0 >/dev/null 2>&1; then
-      BOOT_LOGO_DRAWN=1
-      break
-    fi
-    sleep 0.1
-    logo_wait=$((logo_wait+1))
-  done
-  if [ "$BOOT_LOGO_DRAWN" -eq 0 ] && [ ! -e "$BOOT_USB_REQUEST" ]; then
-    log "NOTICE: framebuffer not ready for early boot logo; will retry after hardware setup"
-  fi
-  # Match upstream BaseOS: enable the panel backlight when userspace supplies
-  # the logo because U-Boot did not.
-  echo 0 > /sys/class/backlight/backlight/bl_power 2>/dev/null || :
-fi
 
 # Sample held boot keys immediately after input devices appear. Do not wait for
 # userdata initialization or first-boot prompts: the user may release Function
@@ -58,6 +40,25 @@ i=0
 while [ ! -e /run/rg353ps-hotkeyd.ready ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
 
 /usr/sbin/baseos-mount-storage
+
+# Draw the full-screen splash only after user data is available, so the first
+# Linux-stage image is already the user's custom BMP when one is installed.
+# The hotkey daemon takes priority and owns the display in USB-storage mode.
+if [ ! -e "$BOOT_USB_REQUEST" ] && [ -x /usr/bin/fbsplash ]; then
+  logo_wait=0
+  while [ "$logo_wait" -lt 25 ]; do
+    if /usr/bin/fbsplash 0 >/dev/null 2>&1; then
+      BOOT_LOGO_DRAWN=1
+      break
+    fi
+    sleep 0.1
+    logo_wait=$((logo_wait+1))
+  done
+  if [ "$BOOT_LOGO_DRAWN" -eq 0 ]; then
+    log "NOTICE: framebuffer not ready for boot logo; will retry after hardware setup"
+  fi
+  echo 0 > /sys/class/backlight/backlight/bl_power 2>/dev/null || :
+fi
 
 # Successful userdata initialization is routine; keep its trace in tmpfs and
 # persist a copy on BASEOS_BOOT only if the initialization loop fails.
@@ -126,14 +127,8 @@ while :; do
   fi
 done
 
-# The early splash runs before /mnt/SDCARD exists. Once BASEOS_DATA is ready,
-# load the same optional BMP used by the bootloader. Do not redraw during a
-# Function-triggered USB-storage boot because the storage helper owns the UI.
-if [ ! -e "$BOOT_USB_REQUEST" ] && [ -r /mnt/SDCARD/bootlogo/bootlogo.bmp ]; then
-  BASEOS_CUSTOM_SPLASH_ONLY=1 /usr/bin/fbsplash 0 >/dev/null 2>&1 ||
-    log "NOTICE: custom bootlogo could not be rendered; preserving boot flow"
-fi
-
+# The custom BMP was selected by the first full-screen draw above.
+# Do not redraw it here: a second full-screen draw would create another flash.
 if [ "$FIRST_BOOT" -eq 1 ] && [ "$SHOW_STARTUP_STATUS" -eq 1 ]; then
   # Clear the first-boot progress state without repainting the full-screen
   # built-in artwork over a bootloader-provided/custom logo.
