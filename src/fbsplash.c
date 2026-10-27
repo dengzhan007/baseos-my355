@@ -698,8 +698,10 @@ static void present(uint8_t *fb, struct fb_var_screeninfo *v,
 
 	if (pill) {
 		render_pill(canvas, rot ? &lv : v, rot ? &lf : f, prog, msg);
-	} else if (!draw_custom_bmp(canvas, rot ? &lv : v, rot ? &lf : f)) {
-		render(canvas, rot ? &lv : v, rot ? &lf : f, prog, msg);
+	} else {
+		int custom_drawn = draw_custom_bmp(canvas, rot ? &lv : v, rot ? &lf : f);
+		if (!custom_drawn && !getenv("BASEOS_CUSTOM_SPLASH_ONLY"))
+			render(canvas, rot ? &lv : v, rot ? &lf : f, prog, msg);
 	}
 
 	if (canvas != fb) {
