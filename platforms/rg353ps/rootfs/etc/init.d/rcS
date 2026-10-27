@@ -20,16 +20,14 @@ printf '\033[?25l' > /dev/tty1 2>/dev/null || :
 log() { printf '%s\n' "$*" > /dev/kmsg 2>/dev/null || :; }
 BOOT_USB_REQUEST=/run/baseos-usb-storage.boot-request
 
-# Start key sampling immediately, then retry the logo briefly while fb0 is
-# being registered. Once Function requests storage, the USB helper owns the
-# display and no later logo redraw may cover its instructions.
+# Start key sampling immediately. Once Function requests storage, the USB helper
+# owns the display and no later logo redraw may cover its instructions.
 rm -f /run/rg353ps-hotkeyd.ready "$BOOT_USB_REQUEST"
 /usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
 echo $! > /run/rg353ps-hotkeyd.pid
-# Do not draw the built-in artwork before BASEOS_DATA is mounted.
-# fbsplash automatically prefers /mnt/SDCARD/bootlogo/bootlogo.bmp when it
-# exists; drawing before the mount caused a visible built-in-logo -> custom-logo
-# transition on every boot.
+# Do not draw any full-screen artwork before BASEOS_DATA is mounted.
+# After the mount, require the user BMP: if it is missing or invalid, leave the
+# bootloader's black framebuffer alone instead of silently drawing BaseOS art.
 BOOT_LOGO_DRAWN=0
 
 # Sample held boot keys immediately after input devices appear. Do not wait for
@@ -47,7 +45,7 @@ while [ ! -e /run/rg353ps-hotkeyd.ready ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$(
 if [ ! -e "$BOOT_USB_REQUEST" ] && [ -x /usr/bin/fbsplash ]; then
   logo_wait=0
   while [ "$logo_wait" -lt 25 ]; do
-    if /usr/bin/fbsplash 0 >/dev/null 2>&1; then
+    if BASEOS_CUSTOM_SPLASH_ONLY=1 /usr/bin/fbsplash 0 >/dev/null 2>&1; then
       BOOT_LOGO_DRAWN=1
       break
     fi
@@ -91,11 +89,11 @@ log "BaseOS userspace initialized for RG353PS"
 # be presenting the USB-storage status pill.
 if [ "$BOOT_LOGO_DRAWN" -eq 0 ] && \
    [ -x /usr/bin/fbsplash ] && [ ! -e "$BOOT_USB_REQUEST" ]; then
-  /usr/bin/fbsplash 0 >/dev/null 2>&1 || log "WARNING: unable to render fallback boot logo"
+  BASEOS_CUSTOM_SPLASH_ONLY=1 /usr/bin/fbsplash 0 >/dev/null 2>&1 || log "WARNING: unable to render custom boot logo"
 fi
 
 # Do not start the diagnostic UI until user storage has been initialized.
-# The BaseOS splash pill overlays the bootloader logo during first-boot work.
+# The status pill overlays the selected full-screen background during first-boot work.
 BOOT_STORAGE_MARKER=/mnt/boot/.baseos-userdata-v1
 FIRST_BOOT=0
 SHOW_STARTUP_STATUS=1
