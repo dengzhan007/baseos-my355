@@ -62,6 +62,16 @@ if [ -x /sbin/modprobe ]; then
   /sbin/modprobe rockchip_rga 2>/dev/null || log "NOTICE: Rockchip RGA driver unavailable"
 fi
 
+# One-shot, opt-in suspend/wakeup inventory. Create an empty
+# BASEOS-SUSPEND-AUDIT file on BASEOS_BOOT from a PC to request a report on
+# the next boot. Consume the request before running so it will not repeat.
+if [ -e /mnt/boot/BASEOS-SUSPEND-AUDIT ] && [ -x /usr/sbin/rg353ps-suspend-audit ]; then
+  rm -f /mnt/boot/BASEOS-SUSPEND-AUDIT
+  /usr/sbin/rg353ps-suspend-audit /mnt/boot >/dev/null 2>&1 || \
+    log "WARNING: RG353PS suspend audit failed; check /mnt/boot"
+  log "RG353PS suspend audit requested; report saved on BASEOS_BOOT"
+fi
+
 log "BaseOS userspace initialized for RG353PS"
 
 # Do not start the diagnostic UI until user storage has been initialized.
