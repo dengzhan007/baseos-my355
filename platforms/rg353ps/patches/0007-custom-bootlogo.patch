@@ -1,56 +1,21 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-Subject: [PATCH] anbernic: load custom bootlogo from exFAT data partition
+Subject: [PATCH] anbernic: suppress the U-Boot logo for RG353PS
 
-Enable U-Boot's filesystem-backed splash loader for the RG353PS image.
-The image remains a single file in BASEOS_DATA, shared with Linux fbsplash.
-If the file or partition cannot be read, normal boot continues and Linux
-will render the image after mounting /mnt/SDCARD.
+Keep the bootloader stage visually blank so the Linux-stage BaseOS splash
+is the only full-screen startup logo. Linux continues to load the optional
+/mnt/SDCARD/bootlogo/bootlogo.bmp after userdata is mounted.
+
+Do not patch generic splash.c or splash_source.c: those changes enable the
+U-Boot splash loader and are not needed for this behavior.
 
 ---
- configs/anbernic-rgxx3-rk3566_defconfig |  6 ++++++
- common/splash.c                         |  3 ++-
- common/splash_source.c                  |  4 +++-
- 3 files changed, 9 insertions(+), 3 deletions(-)
+ configs/anbernic-rgxx3-rk3566_defconfig | 3 +++
+ 1 file changed, 3 insertions(+)
 
 diff --git a/configs/anbernic-rgxx3-rk3566_defconfig b/configs/anbernic-rgxx3-rk3566_defconfig
 --- a/configs/anbernic-rgxx3-rk3566_defconfig
 +++ b/configs/anbernic-rgxx3-rk3566_defconfig
-@@ -90,0 +91,6 @@
-+CONFIG_BMP=y
-+CONFIG_BMP_24BPP=y
-+CONFIG_SPLASH_SCREEN=y
-+CONFIG_SPLASH_SOURCE=y
-+CONFIG_FS_EXFAT=y
-+CONFIG_VIDEO_LOGO=y
-diff --git a/common/splash.c b/common/splash.c
---- a/common/splash.c
-+++ b/common/splash.c
-@@ -37 +37 @@
--		.devpart = "0:1",
-+		.devpart = "0:3",
-@@ -180,4 +180 @@
--	if (!s)
--		return -EINVAL;
--
--	addr = hextoul(s, NULL);
-+	addr = s ? hextoul(s, NULL) : CONFIG_SYS_LOAD_ADDR;
-diff --git a/common/splash_source.c b/common/splash_source.c
---- a/common/splash_source.c
-+++ b/common/splash_source.c
-@@ -331,3 +331,3 @@
- 	env_splashsource = env_get("splashsource");
- 	if (env_splashsource == NULL)
--		return &locations[0];
-+		return &locations[1];
-@@ -386,3 +386,3 @@
- 	splash_file = env_get("splashfile");
- 	if (!splash_file)
--		splash_file = SPLASH_SOURCE_DEFAULT_FILE_NAME;
-+		splash_file = "bootlogo/bootlogo.bmp";
-@@ -444,5 +444,2 @@
- 	env_splashimage_value = env_get("splashimage");
--	if (env_splashimage_value == NULL)
--		return -ENOENT;
--
--	bmp_load_addr = hextoul(env_splashimage_value, 0);
-+	bmp_load_addr = env_splashimage_value ? hextoul(env_splashimage_value, 0) : CONFIG_SYS_LOAD_ADDR;
+@@ -90,0 +91,3 @@
++# CONFIG_VIDEO_LOGO is not set
++# CONFIG_SPLASH_SCREEN is not set
++# CONFIG_SPLASH_SOURCE is not set
