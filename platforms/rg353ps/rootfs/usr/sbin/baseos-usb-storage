@@ -491,9 +491,11 @@ fi
 log "storage mode ready; waiting up to 3600 seconds for DC data cable before binding UDC"
 i=0
 while ! is_data_cable_connected && [ "$i" -lt 3600 ]; do
-  if [ "$i" -eq 0 ] || [ $((i % 10)) -eq 0 ]; then
-    log "waiting for data cable elapsed=${i}s"
+  if [ "$i" -eq 0 ]; then
+    log "waiting for data cable; initial USB/PHY snapshot follows"
     dump_usb_status
+  elif [ $((i % 60)) -eq 0 ]; then
+    log "still waiting for data cable elapsed=${i}s"
   fi
   sleep 1
   i=$((i+1))
