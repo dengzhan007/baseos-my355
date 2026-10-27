@@ -360,7 +360,13 @@ cleanup() {
 
   restore_console_loglevel
   log "storage mode ended; unbind_ok=$UNBIND_OK; configfs function retained for next entry"
-  /usr/bin/fbsplash 100 2>/dev/null || :
+  if [ "$cleanup_status" -eq 0 ]; then
+    /usr/bin/fbsplash 100 2>/dev/null || :
+  else
+    # Do not erase the failure state with the normal boot logo; hotkeyd keeps
+    # the boot-storage gate active so the frontend cannot hide this error.
+    /usr/bin/baseos-splash --important -1 "USB STORAGE FAILED" 2>/dev/null || :
+  fi
   # Persist logs only after the frontend is released; avoid a blocking sync
   # before returning to diagnostics.
   if [ -d /mnt/boot ] && grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null; then
@@ -870,5 +876,10 @@ while [ "$i" -lt 3600 ]; do
   sleep 1
   i=$((i+1))
 done
+if [ "$seen" -eq 0 ]; then
+  log "ERROR: USB host never reached UDC state=configured; storage was not successfully established"
+  /usr/bin/baseos-splash --important -1 "USB ENUMERATION FAILED" 2>/dev/null || :
+  exit 1
+fi
 if [ "$i" -ge 3600 ]; then log "storage mode timed out after one hour; restoring local mount"; fi
 exit 0
