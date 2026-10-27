@@ -1,0 +1,50 @@
+--- a/drivers/usb/gadget/function/f_mass_storage.c
++++ b/drivers/usb/gadget/function/f_mass_storage.c
+@@ -186,6 +186,7 @@
+ #include <linux/fcntl.h>
+ #include <linux/file.h>
+ #include <linux/fs.h>
++#include <linux/jiffies.h>
+ #include <linux/kstrtox.h>
+ #include <linux/kthread.h>
+ #include <linux/sched/signal.h>
+@@ -1870,9 +1871,26 @@ static int do_scsi_command(struct fsg_common *common)
+ static int do_scsi_command(struct fsg_common *common)
+ {
+ 	struct fsg_buffhd	*bh;
+ 	int			rc;
+ 	int			reply = -EINVAL;
+ 	int			i;
+ 	static char		unknown[16];
++	static unsigned int rg353ps_storage_seq;
++	unsigned int rg353ps_storage_id = 0;
++	unsigned long rg353ps_storage_started = 0;
+ 
++	if (common->cmnd[0] == 0x0a || common->cmnd[0] == 0x2a ||
++	    common->cmnd[0] == 0xaa || common->cmnd[0] == 0x8a ||
++	    common->cmnd[0] == 0x35) {
++		rg353ps_storage_id = ++rg353ps_storage_seq;
++		rg353ps_storage_started = jiffies;
++		pr_info("baseos-msdiag: SCSI start seq=%u op=0x%02x "
++			"len=%u dir=%d cdb2-5=%02x%02x%02x%02x "
++			"cdb7-8=%02x%02x\n",
++			rg353ps_storage_id, common->cmnd[0],
++			common->data_size, common->data_dir,
++			common->cmnd[2], common->cmnd[3],
++			common->cmnd[4], common->cmnd[5],
++			common->cmnd[7], common->cmnd[8]);
++	}
+ 	dump_cdb(common);
+@@ -2174,5 +2192,12 @@ static int do_scsi_command(struct fsg_common *common)
+ 		common->residue -= reply;
+ 	}				/* Otherwise it's already set */
+ 
++	if (rg353ps_storage_id &&
++	    (common->cmnd[0] == 0x35 || !(rg353ps_storage_id & 63)))
++		pr_info("baseos-msdiag: SCSI finish seq=%u op=0x%02x "
++			"reply=%d phase_error=%d residue=%u elapsed_ms=%u\n",
++			rg353ps_storage_id, common->cmnd[0], reply,
++			common->phase_error, common->residue,
++			jiffies_to_msecs(jiffies - rg353ps_storage_started));
+ 	return 0;
+ }

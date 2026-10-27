@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] anbernic: keep RG353PS bootloader display black and silent
+
+Clear the framebuffer to black when U-Boot probes the video device. A no-op
+splash callback is insufficient because it leaves pixels handed over by SPL
+visible on the panel. Keep the logo symbol enabled for this U-Boot version's
+linker references, but do not display the logo.
+
+Do not route the U-Boot console to the video console and enable silent
+console output. Linux draws the BaseOS splash after userspace starts.
+
+---
+ configs/anbernic-rgxx3-rk3566_defconfig | 7 +++++++
+ drivers/video/video-uclass.c            | 6 +++---
+ 2 files changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/configs/anbernic-rgxx3-rk3566_defconfig b/configs/anbernic-rgxx3-rk3566_defconfig
+--- a/configs/anbernic-rgxx3-rk3566_defconfig
++++ b/configs/anbernic-rgxx3-rk3566_defconfig
+@@ -90,0 +91,7 @@
++CONFIG_VIDEO_LOGO=y
++# CONFIG_SPLASH_SCREEN is not set
++# CONFIG_SPLASH_SOURCE is not set
++CONFIG_SILENT_CONSOLE=y
++CONFIG_SILENT_CONSOLE_UPDATE_ON_RELOC=y
++CONFIG_SILENT_U_BOOT_ONLY=y
++# CONFIG_DEBUG_UART is not set
+diff --git a/drivers/video/video-uclass.c b/drivers/video/video-uclass.c
+--- a/drivers/video/video-uclass.c
++++ b/drivers/video/video-uclass.c
+@@ -596,8 +596,4 @@ static int show_splash(struct udevice *dev)
+ {
+-	u8 *data = SPLASH_START(u_boot_logo);
+-	int ret;
+-
+-	ret = video_bmp_display(dev, map_to_sysmem(data), -4, 4, true);
+-
+-	return 0;
++	/* Clear any image handed over by SPL; keep U-Boot's screen black. */
++	return video_clear(dev);
+ }

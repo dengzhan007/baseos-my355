@@ -1,0 +1,7 @@
+# BusyBox init for the RG353PS BaseOS bring-up image.
+# Serial shell is always available; tty1 selects a frontend or diagnostics.
+::sysinit:/etc/init.d/rcS
+ttyS2::respawn:/bin/sh
+tty1::respawn:/usr/sbin/baseos-frontend-session
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r

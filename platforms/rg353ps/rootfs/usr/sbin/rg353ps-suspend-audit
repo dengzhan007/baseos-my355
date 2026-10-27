@@ -1,0 +1,172 @@
+#!/bin/sh
+# Read-only suspend/wakeup capability audit for RG353PS.
+# This script NEVER writes to /sys/power/state and NEVER suspends the device.
+set -u
+
+OUTDIR=""
+[ "$#" -gt 0 ] && OUTDIR="$1"
+STAMP="$(date -u +%Y%m%d-%H%M%S 2>/dev/null || echo unknown)"
+if [ -z "$OUTDIR" ]; then
+  if grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null && [ -w /mnt/boot ]; then
+    OUTDIR=/mnt/boot
+  else
+    OUTDIR=/tmp
+  fi
+fi
+mkdir -p "$OUTDIR" 2>/dev/null || OUTDIR=/tmp
+REPORT="$OUTDIR/rg353ps-suspend-audit-$STAMP.txt"
+if ! : > "$REPORT" 2>/dev/null; then
+  OUTDIR=/tmp
+  REPORT="$OUTDIR/rg353ps-suspend-audit-$STAMP.txt"
+  : > "$REPORT" || exit 1
+fi
+
+exec 3>&1 4>&2
+exec > "$REPORT" 2>&1
+section() { printf '\n===== %s =====\n' "$1"; }
+show_file() {
+  if [ -r "$1" ]; then
+    printf '\n--- %s ---\n' "$1"
+    cat "$1" 2>&1 || :
+  else
+    printf '\n--- %s (not present/readable) ---\n' "$1"
+  fi
+}
+show_attr() {
+  if [ -r "$1" ]; then
+    printf '%s=' "$1"
+    tr '\n' ' ' < "$1" 2>/dev/null || :
+    printf '\n'
+  else
+    printf '%s=<unavailable>\n' "$1"
+  fi
+}
+run_cmd() {
+  printf '\n$'
+  for arg in "$@"; do printf ' %s' "$arg"; done
+  printf '\n'
+  "$@" 2>&1
+  rc="$?"
+  printf '[exit code: %s]\n' "$rc"
+  return 0
+}
+
+section 'SAFETY / IDENTIFICATION'
+echo 'Read-only audit: no power-state writes, no suspend attempt, no input events consumed.'
+echo "Report: $REPORT"
+date -u 2>/dev/null || :
+uname -a 2>&1 || :
+show_file /proc/cmdline
+show_file /proc/version
+show_file /etc/baseos-kernel-release
+if [ -r /proc/device-tree/model ]; then
+  printf 'device-tree model='
+  tr -d '\000' < /proc/device-tree/model 2>/dev/null || :
+  printf '\n'
+fi
+if [ -r /proc/device-tree/compatible ]; then
+  printf 'device-tree compatible:\n'
+  tr '\000' '\n' < /proc/device-tree/compatible 2>/dev/null || :
+fi
+
+section 'KERNEL SUSPEND INTERFACE'
+show_file /sys/power/state
+show_file /sys/power/mem_sleep
+show_file /sys/power/disk
+show_file /sys/power/pm_test
+show_file /sys/power/pm_async
+show_file /sys/power/wakeup_count
+show_file /sys/power/suspend_stats/success
+show_file /sys/power/suspend_stats/fail
+show_file /sys/power/suspend_stats/failed_freeze
+show_file /sys/power/suspend_stats/failed_prepare
+show_file /sys/power/suspend_stats/failed_suspend
+show_file /sys/power/suspend_stats/failed_suspend_noirq
+show_file /sys/power/suspend_stats/failed_resume
+  # /proc/config.gz is binary; only print selected decoded options below.
+if [ -r /proc/config.gz ] && command -v zcat >/dev/null 2>&1; then
+  echo '\n--- relevant running-kernel config ---'
+  zcat /proc/config.gz 2>/dev/null | grep -E '^CONFIG_(SUSPEND|PM_SLEEP|PM_SLEEP_SMP|HIBERNATION|CPU_IDLE|ARM_PSCI|ROCKCHIP_PM_DOMAINS|RTC_CLASS|KEYBOARD_ADC|INPUT_EVDEV)=' || :
+fi
+
+section 'WAKEUP SOURCE INVENTORY'
+echo 'For each device, report power/wakeup and runtime status when exported.'
+for d in /sys/devices/* /sys/devices/platform/* /sys/bus/*/devices/* /sys/class/input/* /sys/class/rtc/* /sys/class/power_supply/*; do
+  [ -e "$d" ] || continue
+  [ -d "$d/power" ] || continue
+  if [ -r "$d/power/wakeup" ] || [ -r "$d/power/control" ] || [ -r "$d/power/runtime_status" ]; then
+    printf '\n[%s]\n' "$d"
+    show_attr "$d/power/wakeup"
+    show_attr "$d/power/control"
+    show_attr "$d/power/runtime_status"
+    show_attr "$d/power/runtime_suspended_time"
+    show_attr "$d/power/runtime_active_time"
+  fi
+done
+
+section 'INPUT / POWER KEY'
+show_file /proc/bus/input/devices
+for d in /sys/class/input/event*; do
+  [ -e "$d" ] || continue
+  printf '\n[%s]\n' "$d"
+  show_attr "$d/device/name"
+  show_attr "$d/device/phys"
+  show_attr "$d/device/power/wakeup"
+done
+echo 'No evtest or key reads are performed; input remains available to the running UI.'
+
+section 'RTC / POWER / BATTERY'
+for d in /sys/class/rtc/rtc*; do
+  [ -e "$d" ] || continue
+  printf '\n[%s]\n' "$d"
+  for a in name date time since_epoch wakealarm hctosys; do show_attr "$d/$a"; done
+done
+for d in /sys/class/power_supply/*; do
+  [ -e "$d" ] || continue
+  printf '\n[%s]\n' "$d"
+  for a in type status present online capacity voltage_now current_now power_now charge_now charge_full; do show_attr "$d/$a"; done
+done
+
+section 'CPU IDLE / CLOCK / THERMAL'
+for d in /sys/devices/system/cpu/cpu*/cpuidle/state*; do
+  [ -d "$d" ] || continue
+  printf '\n[%s]\n' "$d"
+  for a in name desc latency residency usage time disable; do show_attr "$d/$a"; done
+done
+for d in /sys/devices/system/cpu/cpufreq/policy*; do
+  [ -d "$d" ] || continue
+  printf '\n[%s]\n' "$d"
+  for a in scaling_driver scaling_governor scaling_min_freq scaling_max_freq scaling_cur_freq; do show_attr "$d/$a"; done
+done
+
+section 'DISPLAY / AUDIO / USB DEVICES'
+for root in /sys/class/drm /sys/class/backlight /sys/class/sound /sys/bus/usb/devices; do
+  [ -d "$root" ] || continue
+  for d in "$root"/*; do
+    [ -e "$d" ] || continue
+    printf '\n[%s]\n' "$d"
+    for a in status enabled modes brightness actual_brightness bl_power product manufacturer speed; do show_attr "$d/$a"; done
+    [ -d "$d/power" ] && {
+      show_attr "$d/power/wakeup"
+      show_attr "$d/power/control"
+      show_attr "$d/power/runtime_status"
+    }
+  done
+done
+
+section 'RELEVANT KERNEL LOG'
+dmesg 2>&1 | grep -iE 'suspend|resume|wakeup|wake-up|rockchip.*pm|system sleep|PM:|power domain|psci|rk817|rtc|gpio.*key|adc.*key|panel|backlight|drm|dwc3|usb' | tail -n 300 || :
+
+section 'INTERPRETATION NOTES'
+cat <<'EOF'
+- Presence of /sys/power/state with 'freeze' indicates a suspend-to-idle entry point.
+- 'mem' plus /sys/power/mem_sleep '[deep]' suggests suspend-to-RAM is selectable,
+  but does not prove the RG353PS can enter and resume it reliably.
+- A device's power/wakeup='enabled' is only one clue; actual wake routing and
+  board-level power behavior must be validated on hardware.
+- This report intentionally does not attempt suspend. A later test must be
+  explicitly initiated with a recovery plan and verified wake source.
+EOF
+echo "Report saved to: $REPORT"
+exec 1>&3 2>&4
+cat "$REPORT"

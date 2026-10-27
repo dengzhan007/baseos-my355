@@ -1,0 +1,5 @@
+NAME="BaseOS RG353PS"
+ID=baseos-rg353ps
+ID_LIKE=alpine
+PRETTY_NAME="BaseOS RG353PS Experimental Bring-up"
+VERSION_ID="0.1"

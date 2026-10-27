@@ -1,0 +1,384 @@
+#!/bin/sh
+# Automatically discover user-installed frontends: TF2 first, then TF1 user data.
+# Config values are plain key=value data and are never sourced or eval'd.
+set -u
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+TF1=/mnt/SDCARD
+TF2=/mnt/TF2
+CONFIG=/mnt/boot/baseos.conf
+[ -r "$CONFIG" ] || CONFIG=/etc/baseos.conf
+
+# A boot-time Function request has priority over frontend launch. hotkeyd
+# creates this marker before publishing its startup-ready signal and removes it
+# only after the USB-storage helper has returned.
+BOOT_STORAGE_REQUEST=/run/baseos-usb-storage.boot-request
+while [ -e "$BOOT_STORAGE_REQUEST" ]; do sleep 0.1; done
+
+# Keep frontend-discovery traces in tmpfs on normal boots. Copy them to BOOT
+# only when detection falls back to diagnostics, where a PC can read the report.
+DETECTION_LOG=/mnt/boot/baseos-frontend-detection.txt
+DETECTION_TMP=/tmp/baseos-frontend-detection.txt
+PERSIST_DETECTION_LOG=no
+: > "$DETECTION_TMP" 2>/dev/null || DETECTION_TMP=/dev/null
+rm -f "$DETECTION_LOG" 2>/dev/null || :
+log() {
+  log_message="baseos-frontend: $*"
+  printf '%s\n' "$log_message" > /dev/kmsg 2>/dev/null || :
+  printf '%s\n' "$log_message" >> "$DETECTION_TMP" 2>/dev/null || :
+  if [ "$PERSIST_DETECTION_LOG" = yes ]; then
+    printf '%s\n' "$log_message" >> "$DETECTION_LOG" 2>/dev/null || :
+  fi
+}
+persist_detection_log() {
+  if [ "$PERSIST_DETECTION_LOG" != yes ]; then
+    cp "$DETECTION_TMP" "$DETECTION_LOG" 2>/dev/null || :
+    PERSIST_DETECTION_LOG=yes
+  fi
+}
+is_mounted() { grep -q " $1 " /proc/mounts; }
+
+setting() {
+  setting_key=$1
+  setting_default=$2
+  setting_value=$setting_default
+  if [ -r "$CONFIG" ]; then
+    while IFS= read -r setting_line || [ -n "$setting_line" ]; do
+      case "$setting_line" in
+        "$setting_key"=*) setting_value=${setting_line#*=} ;;
+      esac
+    done < "$CONFIG"
+  fi
+  printf '%s' "$setting_value"
+}
+
+diagnostic() {
+  persist_detection_log
+  log "starting built-in diagnostic UI"
+  # Keep this supervisor alive in diagnostic mode too, so the Function/Mode
+  # USB-storage hotkey can safely stop the UI and unmount the data card.
+  while :; do
+    /usr/sbin/rg353ps-control-center &
+    DIAGNOSTIC_PID=$!
+    while kill -0 "$DIAGNOSTIC_PID" 2>/dev/null; do
+      if [ -e /run/baseos-usb-storage.request ]; then
+        log "USB storage requested while diagnostic UI is active"
+        kill -TERM "$DIAGNOSTIC_PID" 2>/dev/null || :
+        i=0
+        while kill -0 "$DIAGNOSTIC_PID" 2>/dev/null && [ "$i" -lt 15 ]; do
+          sleep 0.1
+          i=$((i+1))
+        done
+        if kill -0 "$DIAGNOSTIC_PID" 2>/dev/null; then
+          kill -KILL "$DIAGNOSTIC_PID" 2>/dev/null || :
+        fi
+        wait "$DIAGNOSTIC_PID" 2>/dev/null || :
+        cd /
+        : > /run/baseos-frontend-paused
+        while [ -e /run/baseos-usb-storage.request ]; do sleep 0.1; done
+        rm -f /run/baseos-frontend-paused
+        log "USB storage finished from diagnostic mode; rediscovering frontend"
+        exec /usr/sbin/baseos-frontend-session
+      fi
+      sleep 0.1
+    done
+    wait "$DIAGNOSTIC_PID" 2>/dev/null || :
+    sleep 0.2
+  done
+}
+
+parent_disk_name() {
+  case "$1" in
+    *p[0-9]*) printf '%s' "${1%p[0-9]*}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Identify the physical card containing BASEOS_ROOT so it can never be
+# mistaken for TF2 while scanning removable-card partitions.
+SYSTEM_DISK=
+for event_file in /sys/class/block/*p*/uevent; do
+  [ -r "$event_file" ] || continue
+  event_dev=
+  event_part=
+  while IFS= read -r event_line || [ -n "$event_line" ]; do
+    case "$event_line" in
+      DEVNAME=*) event_dev=${event_line#DEVNAME=} ;;
+      PARTNAME=*) event_part=${event_line#PARTNAME=} ;;
+    esac
+  done < "$event_file"
+  if [ "$event_part" = "BASEOS_ROOT" ] && [ -n "$event_dev" ]; then
+    SYSTEM_DISK=$(parent_disk_name "$event_dev") || SYSTEM_DISK=
+    break
+  fi
+done
+
+mkdir -p "$TF1" "$TF2"
+ln -sfn "$TF1" /mnt/sdcard
+
+# Mount the second TF card at a separate path, probing its filesystem instead
+# of assuming FAT. Prefer the historical RG353PS device node, then discover
+# other mmcblkXp1 partitions without ever mounting a partition on TF1's disk.
+try_mount_tf2() {
+  candidate_device=$1
+  [ -b "$candidate_device" ] || return 1
+  candidate_name=${candidate_device#/dev/}
+  candidate_parent=$(parent_disk_name "$candidate_name") || return 1
+  if [ -n "$SYSTEM_DISK" ] && [ "$candidate_parent" = "$SYSTEM_DISK" ]; then
+    return 1
+  fi
+  if is_mounted "$TF2"; then
+    return 0
+  fi
+  if grep -q " $candidate_device " /proc/mounts; then
+    return 1
+  fi
+
+  candidate_type=$(blkid -p -s TYPE -o value "$candidate_device" 2>/dev/null || :)
+  case "$candidate_type" in
+    vfat|exfat|ext4) ;;
+    *) log "skipping $candidate_device: unsupported or unknown filesystem '$candidate_type'"; return 1 ;;
+  esac
+  /sbin/modprobe "$candidate_type" 2>/dev/null || :
+  if mount -t "$candidate_type" -o rw,noatime "$candidate_device" "$TF2" 2>/dev/null; then
+    log "mounted TF2 candidate $candidate_device ($candidate_type) at $TF2"
+    return 0
+  fi
+  log "could not mount TF2 candidate $candidate_device"
+  return 1
+}
+
+TF2_DEVICE=$(setting frontend_device /dev/mmcblk2p1)
+if ! is_mounted "$TF2"; then
+  try_mount_tf2 "$TF2_DEVICE" || :
+  if ! is_mounted "$TF2"; then
+    for event_file in /sys/class/block/mmcblk*p1/uevent; do
+      [ -r "$event_file" ] || continue
+      candidate_name=
+      candidate_part=
+      while IFS= read -r event_line || [ -n "$event_line" ]; do
+        case "$event_line" in
+          DEVNAME=*) candidate_name=${event_line#DEVNAME=} ;;
+          PARTNAME=*) candidate_part=${event_line#PARTNAME=} ;;
+        esac
+      done < "$event_file"
+      [ -n "$candidate_name" ] || continue
+      case "$candidate_part" in BASEOS_BOOT|BASEOS_ROOT|BASEOS_DATA) continue ;; esac
+      [ "/dev/$candidate_name" = "$TF2_DEVICE" ] && continue
+      if try_mount_tf2 "/dev/$candidate_name"; then
+        break
+      fi
+    done
+  fi
+fi
+if ! is_mounted "$TF2"; then
+  log "TF2 not present or not mountable; TF1 user data will be checked"
+fi
+
+# The init script normally mounts BASEOS_DATA here. Retry a non-destructive
+# mount if that earlier step could not mount an already-formatted user area.
+if is_mounted "$TF1"; then
+  TF1_SOURCE=$(awk '$2 == "/mnt/SDCARD" { print $1 " type=" $3; exit }' /proc/mounts)
+  log "TF1 user-data mount ready: $TF1_SOURCE"
+else
+  log "TF1 user-data path /mnt/SDCARD is not mounted before frontend scan"
+fi
+
+if ! is_mounted "$TF1"; then
+  for event_file in /sys/class/block/*p*/uevent; do
+    [ -r "$event_file" ] || continue
+    candidate_name=
+    candidate_part=
+    while IFS= read -r event_line || [ -n "$event_line" ]; do
+      case "$event_line" in
+        DEVNAME=*) candidate_name=${event_line#DEVNAME=} ;;
+        PARTNAME=*) candidate_part=${event_line#PARTNAME=} ;;
+      esac
+    done < "$event_file"
+    [ "$candidate_part" = "BASEOS_DATA" ] || continue
+    [ -n "$candidate_name" ] || continue
+    [ -b "/dev/$candidate_name" ] || continue
+    candidate_type=$(blkid -p -s TYPE -o value "/dev/$candidate_name" 2>/dev/null || :)
+    case "$candidate_type" in vfat|exfat) ;; *) continue ;; esac
+    /sbin/modprobe "$candidate_type" 2>/dev/null || :
+    if mount -t "$candidate_type" -o rw,noatime "/dev/$candidate_name" "$TF1" 2>/dev/null; then
+      log "mounted TF1 user data /dev/$candidate_name ($candidate_type) at $TF1"
+      break
+    fi
+  done
+fi
+
+# Legacy `frontend=...` and `allow_external_frontend_adapters=...` keys are
+# intentionally not used: detection is automatic and user-installed frontends
+# are expected to ship their own adapter. force_diagnostic=yes is the explicit
+# troubleshooting override. Adapter scripts must only come from trusted cards.
+if [ "$(setting force_diagnostic no)" = "yes" ]; then
+  diagnostic
+fi
+
+FRONTENDS_ORDER=$(setting frontends_order nextui,slot,custom)
+[ -n "$FRONTENDS_ORDER" ] || FRONTENDS_ORDER=nextui,slot,custom
+
+resolve_adapter() {
+  adapter_root=$1
+  profile_name=$2
+  case "$profile_name" in
+    nextui|slot|custom) ;;
+    *) return 1 ;;
+  esac
+
+  # The canonical path is hidden by convention, but offer a visible alias too:
+  # some extraction tools omit dot-prefixed directories from selected views.
+  adapter="$adapter_root/.baseos/frontends/$profile_name/launch.sh"
+  [ -f "$adapter" ] || adapter="$adapter_root/baseos/frontends/$profile_name/launch.sh"
+
+  if [ -f "$adapter" ]; then
+    if [ "$profile_name" = "slot" ] && [ ! -f "$adapter_root/System/slot" ]; then
+      log "found Slot adapter at $adapter_root but System/slot is missing"
+      return 1
+    fi
+    printf '%s' "$adapter"
+    return 0
+  fi
+
+  # A Slot ZIP may have been extracted by a tool that skipped the dot-folder,
+  # even though System/slot is present. Use the OS-bundled launcher in that
+  # case, so the package does not silently fall through to diagnostics.
+  if [ "$profile_name" = "slot" ] && [ -f "$adapter_root/System/slot" ]; then
+    log "Slot binary found at $adapter_root/System/slot but adapter file is absent; using built-in launcher"
+    printf '%s' "/usr/sbin/baseos-slot-launcher"
+    return 0
+  fi
+
+  log "no $profile_name adapter at $adapter_root/.baseos/frontends/$profile_name/launch.sh"
+  return 1
+}
+
+scan_root() {
+  scan_root_dir=$1
+  log "scanning frontend root $scan_root_dir"
+  if is_mounted "$scan_root_dir"; then
+    scan_source=$(awk -v mountpoint="$scan_root_dir" '$2 == mountpoint { print $1 " type=" $3; exit }' /proc/mounts)
+    log "frontend root mounted: $scan_source"
+  else
+    log "frontend root is not mounted: $scan_root_dir"
+    return 1
+  fi
+
+  old_ifs=$IFS
+  IFS=,
+  for profile in $FRONTENDS_ORDER; do
+    case "$profile" in nextui|slot|custom) ;; *) continue ;; esac
+    candidate=$(resolve_adapter "$scan_root_dir" "$profile") || {
+      # Support archives extracted into one wrapper directory by common GUI tools.
+      for nested_root in "$scan_root_dir"/*; do
+        [ -d "$nested_root" ] || continue
+        candidate=$(resolve_adapter "$nested_root" "$profile") || continue
+        log "found $profile adapter in nested directory $nested_root"
+        SELECTED=$profile
+        LAUNCHER=$candidate
+        FRONTEND_ROOT=$nested_root
+        IFS=$old_ifs
+        return 0
+      done
+      continue
+    }
+    SELECTED=$profile
+    LAUNCHER=$candidate
+    FRONTEND_ROOT=$scan_root_dir
+    IFS=$old_ifs
+    return 0
+  done
+  IFS=$old_ifs
+  log "no supported frontend found at or one directory below $scan_root_dir"
+  return 1
+}
+
+SELECTED=
+LAUNCHER=
+FRONTEND_ROOT=
+# Card priority is deliberate: use TF2 if it has a recognized adapter; only
+# fall back to TF1's BASEOS_DATA when TF2 is absent or has no usable frontend.
+if is_mounted "$TF2"; then
+  if scan_root "$TF2"; then
+    log "selected $SELECTED frontend from TF2 ($FRONTEND_ROOT)"
+  else
+    log "TF2 has no usable frontend; checking TF1 user data"
+  fi
+fi
+if [ -z "$LAUNCHER" ] && is_mounted "$TF1"; then
+  if scan_root "$TF1"; then
+    log "selected $SELECTED frontend from TF1 ($FRONTEND_ROOT)"
+  fi
+fi
+if [ -z "$LAUNCHER" ]; then
+  log "no usable frontend found on TF2 or TF1; falling back to diagnostics"
+  log "inspect $DETECTION_LOG; expected Slot files are System/slot and .baseos/frontends/slot/launch.sh"
+  diagnostic
+fi
+
+# Keep the compatibility alias aligned with the card actually selected.
+ln -sfn "$FRONTEND_ROOT" /mnt/sdcard
+PLATFORM=rg353ps
+BASEOS_FRONTEND_ID=$SELECTED
+BASEOS_SYSTEM_ROOT=/
+BASEOS_BOOT=/mnt/boot
+BASEOS_FRONTEND_ROOT=$FRONTEND_ROOT
+BASEOS_DATA_DIR="$FRONTEND_ROOT/.baseos/data"
+BASEOS_USERDATA_DIR="$FRONTEND_ROOT/.baseos/userdata"
+BASEOS_LAUNCHER=$LAUNCHER
+export PLATFORM BASEOS_FRONTEND_ID BASEOS_SYSTEM_ROOT BASEOS_BOOT
+export BASEOS_FRONTEND_ROOT BASEOS_DATA_DIR BASEOS_USERDATA_DIR BASEOS_LAUNCHER
+mkdir -p "$BASEOS_DATA_DIR" "$BASEOS_USERDATA_DIR" 2>/dev/null || :
+cd "$FRONTEND_ROOT" || diagnostic
+log "launching $SELECTED adapter: $LAUNCHER"
+# Pause the frontend before exposing its mounted card to the USB host.
+kill_tree() {
+  signal=$1
+  pid=$2
+  [ -r "/proc/$pid/task/$pid/children" ] || { kill -"$signal" "$pid" 2>/dev/null || :; return; }
+  children=$(cat "/proc/$pid/task/$pid/children" 2>/dev/null || :)
+  for child in $children; do kill_tree "$signal" "$child"; done
+  kill -"$signal" "$pid" 2>/dev/null || :
+}
+/bin/sh "$LAUNCHER" &
+FRONTEND_PID=$!
+while kill -0 "$FRONTEND_PID" 2>/dev/null; do
+  # One-shot, opt-in first-stage suspend test. This runs only after a frontend
+  # has launched, so its process tree can be checked after resume. Never run
+  # while the shared card is being exported or the frontend is being unmounted.
+  SUSPEND_TEST_MARKER=/mnt/boot/BASEOS-SUSPEND-TEST-S2IDLE
+  if [ -e "$SUSPEND_TEST_MARKER" ] && [ -x /usr/sbin/rg353ps-suspend-test ]; then
+    if rm -f "$SUSPEND_TEST_MARKER" 2>/dev/null && [ ! -e "$SUSPEND_TEST_MARKER" ]; then
+      sync
+      log "one-shot s2idle suspend/resume test requested"
+      /usr/sbin/rg353ps-suspend-test s2idle
+      suspend_test_rc=$?
+      log "suspend/resume test helper returned exit=$suspend_test_rc"
+    else
+      log "suspend test request could not be consumed; refusing to suspend"
+    fi
+  fi
+  if [ -e /run/baseos-usb-storage.request ]; then
+    log "USB storage requested; stopping frontend before unmount"
+    kill_tree TERM "$FRONTEND_PID"
+    i=0
+    while kill -0 "$FRONTEND_PID" 2>/dev/null && [ "$i" -lt 15 ]; do sleep 0.1; i=$((i+1)); done
+    if kill -0 "$FRONTEND_PID" 2>/dev/null; then kill_tree KILL "$FRONTEND_PID"; fi
+    wait "$FRONTEND_PID" 2>/dev/null || :
+    cd /
+    : > /run/baseos-frontend-paused
+    while [ -e /run/baseos-usb-storage.request ]; do sleep 0.1; done
+    rm -f /run/baseos-frontend-paused
+    log "USB storage finished; rediscovering frontend"
+    exec /usr/sbin/baseos-frontend-session
+  fi
+  sleep 0.1
+done
+wait "$FRONTEND_PID"
+rc=$?
+persist_detection_log
+log "frontend '$SELECTED' exited with status $rc; returning to diagnostics"
+printf '\033[0m\033[?25h\033[2J\033[H' > /dev/tty1 2>/dev/null || :
+exec /usr/sbin/rg353ps-control-center
