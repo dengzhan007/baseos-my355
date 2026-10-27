@@ -13,7 +13,6 @@ will render the image after mounting /mnt/SDCARD.
  3 files changed, 7 insertions(+), 3 deletions(-)
 
 diff --git a/configs/anbernic-rgxx3-rk3566_defconfig b/configs/anbernic-rgxx3-rk3566_defconfig
-index 0000000..1111111 100644
 --- a/configs/anbernic-rgxx3-rk3566_defconfig
 +++ b/configs/anbernic-rgxx3-rk3566_defconfig
 @@ -90,0 +91,5 @@
@@ -23,7 +22,6 @@ index 0000000..1111111 100644
 +CONFIG_SPLASH_SOURCE=y
 +CONFIG_FS_EXFAT=y
 diff --git a/common/splash.c b/common/splash.c
-index 0000000..1111111 100644
 --- a/common/splash.c
 +++ b/common/splash.c
 @@ -37 +37 @@
@@ -39,7 +37,6 @@ index 0000000..1111111 100644
 -	addr = hextoul(s, NULL);
 +	addr = s ? hextoul(s, NULL) : CONFIG_SYS_LOAD_ADDR;
 diff --git a/common/splash_source.c b/common/splash_source.c
-index 0000000..1111111 100644
 --- a/common/splash_source.c
 +++ b/common/splash_source.c
 @@ -231 +231 @@
