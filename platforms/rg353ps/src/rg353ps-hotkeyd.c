@@ -40,6 +40,7 @@ static long long keys_first_seen_ms = -1;
 static int missing_keys_reported;
 #define BOOT_LOG_STAGE "/run/rg353ps-boot-key.log"
 #define BOOT_LOG_FINAL "/mnt/SDCARD/rg353ps-boot-key.log"
+#define BOOT_STORAGE_REQUEST "/run/baseos-usb-storage.boot-request"
 
 static void stop_running(int sig) { (void)sig; running = 0; }
 static int userdata_is_mounted(void) {
@@ -63,7 +64,8 @@ static void flush_staged_log(void) {
     ssize_t n;
     if (sd_log_active || !userdata_is_mounted()) return;
     in_fd = open(BOOT_LOG_STAGE, O_RDONLY | O_CLOEXEC);
-    out_fd = open(BOOT_LOG_FINAL, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    /* Start a fresh, compact report for this boot rather than accumulating logs forever. */
+    out_fd = open(BOOT_LOG_FINAL, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (out_fd < 0) { if (in_fd >= 0) close(in_fd); return; }
     if (in_fd >= 0) {
         while ((n = read(in_fd, buf, sizeof(buf))) > 0) {
@@ -85,6 +87,26 @@ static long long monotonic_ms(void) {
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
     return ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
 }
+static int keep_persistent_log_message(const char *message) {
+    /* Keep the removable-card report focused on startup decisions and hotkey
+       events. Full input enumeration remains available in the kernel log. */
+    if (strstr(message, "started; boot-key") != NULL ||
+        strstr(message, "BOOT_KEY_CHECK") != NULL ||
+        strstr(message, "ROLE_KEYS device found") != NULL ||
+        strstr(message, "boot storage gate") != NULL ||
+        strstr(message, "entering USB storage mode") != NULL ||
+        strstr(message, "USB storage mode finished") != NULL ||
+        strstr(message, "boot-triggered USB storage session returned") != NULL ||
+        strstr(message, "read error") != NULL ||
+        strstr(message, "poll failed") != NULL ||
+        strstr(message, "cannot fork USB storage mode") != NULL ||
+        strstr(message, "waitpid failed for USB storage mode") != NULL ||
+        strstr(message, "mapped=FUNCTION") != NULL ||
+        strstr(message, "mapped=MODE") != NULL)
+        return 1;
+    return 0;
+}
+
 static void log_message(const char *message) {
     char line[512];
     int fd;
@@ -94,7 +116,7 @@ static void log_message(const char *message) {
         if (n > 0) (void)write(fd, line, (size_t)n < sizeof(line) ? (size_t)n : sizeof(line)-1);
         (void)close(fd);
     }
-    if (n > 0) {
+    if (n > 0 && keep_persistent_log_message(message)) {
         const char *path = sd_log_active ? BOOT_LOG_FINAL : BOOT_LOG_STAGE;
         fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
         if (fd >= 0) {
@@ -387,6 +409,17 @@ int main(void) {
                 char boot_msg[256];
                 startup_checked = 1;
                 startup_key_release_seen = !(function_down || mode_down);
+                /* Publish the storage gate before rcS sees READY; otherwise
+                   tty1 can launch NextUI over the storage prompt. */
+                if (function_down) {
+                    int request = open(BOOT_STORAGE_REQUEST, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
+                    if (request >= 0) {
+                        close(request);
+                        log_message("boot storage gate enabled before startup-ready signal");
+                    } else {
+                        log_message("WARNING: could not create boot storage gate");
+                    }
+                }
                 {
                     int ready = open("/run/rg353ps-hotkeyd.ready", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0600);
                     if (ready >= 0) close(ready);
@@ -398,7 +431,8 @@ int main(void) {
                     log_message(boot_msg);
                     storage_latched = 1;
                     (void)enter_usb_storage_mode(1);
-                    log_message("boot-triggered USB storage session returned; release Function before another trigger");
+                    (void)unlink(BOOT_STORAGE_REQUEST);
+                    log_message("boot-triggered USB storage session returned; boot storage gate cleared");
                 } else {
                     (void)snprintf(boot_msg, sizeof(boot_msg),
                         "BOOT_KEY_CHECK result=sampled key_device_found=1 function_down=0 mode_down=%d decision=NORMAL_BOOT",
