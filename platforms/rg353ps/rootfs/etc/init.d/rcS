@@ -134,7 +134,9 @@ while :; do
 done
 
 if [ "$FIRST_BOOT" -eq 1 ] && [ "$SHOW_STARTUP_STATUS" -eq 1 ]; then
-  /usr/bin/fbsplash 100 2>/dev/null || :
+  # Clear the first-boot progress state without repainting the full-screen
+  # built-in artwork over a bootloader-provided/custom logo.
+  /usr/bin/baseos-splash --important 100 "STORAGE READY" 2>/dev/null || :
 fi
 
 
