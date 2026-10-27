@@ -7,16 +7,16 @@ If the file or partition cannot be read, normal boot continues and Linux
 will render the image after mounting /mnt/SDCARD.
 
 ---
- configs/anbernic-rgxx3-rk3566_defconfig |  4 ++++
- common/splash.c                         |  5 ++---
+ configs/anbernic-rgxx3-rk3566_defconfig |  5 +++++
+ common/splash.c                         |  7 +++----
  common/splash_source.c                 |  2 +-
- 3 files changed, 7 insertions(+), 4 deletions(-)
+ 3 files changed, 8 insertions(+), 6 deletions(-)
 
 diff --git a/configs/anbernic-rgxx3-rk3566_defconfig b/configs/anbernic-rgxx3-rk3566_defconfig
 index 0000000..1111111 100644
 --- a/configs/anbernic-rgxx3-rk3566_defconfig
 +++ b/configs/anbernic-rgxx3-rk3566_defconfig
-@@ -87,6 +87,10 @@ CONFIG_SYSRESET=y
+@@ -87,7 +87,12 @@ CONFIG_SYSRESET=y
  CONFIG_VIDEO=y
  CONFIG_VIDEO_ROCKCHIP=y
  CONFIG_DISPLAY_ROCKCHIP_DW_MIPI=y
