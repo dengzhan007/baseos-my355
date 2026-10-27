@@ -13,19 +13,34 @@ mount -t tmpfs -o mode=1777 tmpfs /tmp 2>/dev/null || :
 echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null || :
 /sbin/mdev -s 2>/dev/null || :
 
+log() { printf '%s\n' "$*" > /dev/kmsg 2>/dev/null || :; }
+
+# Start key sampling immediately, but render the logo before the slower
+# storage and optional-module setup. This prevents the boot cursor from being
+# the only visible content while userspace initializes.
+rm -f /run/rg353ps-hotkeyd.ready /run/baseos-usb-storage.boot-request
+/usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
+echo $! > /run/rg353ps-hotkeyd.pid
+BOOT_LOGO_DRAWN=0
+if [ -x /usr/bin/fbsplash ]; then
+  if /usr/bin/fbsplash 0 >/dev/null 2>&1; then
+    BOOT_LOGO_DRAWN=1
+  else
+    log "NOTICE: framebuffer not ready for early boot logo; will retry after hardware setup"
+  fi
+fi
+
 # Sample held boot keys immediately after input devices appear. Do not wait for
 # userdata initialization or first-boot prompts: the user may release Function
 # before those potentially long steps finish. The storage helper itself waits
 # until /mnt/SDCARD is mounted before exporting it.
-rm -f /run/rg353ps-hotkeyd.ready /run/baseos-usb-storage.boot-request
-/usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
-echo $! > /run/rg353ps-hotkeyd.pid
 i=0
 while [ ! -e /run/rg353ps-hotkeyd.ready ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
 
 /usr/sbin/baseos-mount-storage
 
-log() { printf '%s\n' "$*" > /dev/kmsg 2>/dev/null || :; }
+# Keep only the current boot's userdata-init report on the boot partition.
+: > /mnt/boot/baseos-userdata-init.txt 2>/dev/null || :
 
 # Keep boot diagnostics in the kernel ring buffer, not on the handheld screen.
 dmesg -n 1 2>/dev/null || :
@@ -46,10 +61,10 @@ fi
 
 log "BaseOS userspace initialized for RG353PS"
 
-# RG353PS uses this target-specific rcS instead of the shared overlay rcS,
-# so it must draw the normal full-screen logo itself. Do this before any
-# first-boot or storage status pill, which intentionally overlays the logo.
-if [ -x /usr/bin/fbsplash ]; then
+# Retry only if the early draw ran before the framebuffer was ready.
+# Never repaint a successful early logo here: the boot-key daemon may already
+# be presenting the USB-storage status pill.
+if [ "$BOOT_LOGO_DRAWN" -eq 0 ] && [ -x /usr/bin/fbsplash ]; then
   /usr/bin/fbsplash 0 >/dev/null 2>&1 || log "WARNING: unable to render boot logo"
 fi
 
