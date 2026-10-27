@@ -599,6 +599,75 @@ static void rotate_blit(uint8_t *fb, const struct fb_var_screeninfo *pv,
 	}
 }
 
+// --- optional user-supplied BMP boot logo ---------------------------------
+//
+// Shared Linux-side path. U-Boot support is configured separately; Linux can
+// display this file after BASEOS_DATA has been mounted. Accept only the simple
+// uncompressed 24-bit BMP3 format so malformed files cannot stall early boot.
+#define CUSTOM_SPLASH_PATH "/mnt/SDCARD/bootlogo/bootlogo.bmp"
+static uint32_t bmp_le32(const uint8_t *p) {
+	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+	       ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static int draw_custom_bmp(uint8_t *fb, struct fb_var_screeninfo *v,
+                           struct fb_fix_screeninfo *f) {
+	FILE *fp = fopen(CUSTOM_SPLASH_PATH, "rb");
+	if (!fp)
+		return 0;
+	uint8_t h[54];
+	if (fread(h, 1, sizeof(h), fp) != sizeof(h) ||
+	    h[0] != 'B' || h[1] != 'M' || bmp_le32(h + 14) < 40 ||
+	    h[26] != 1 || h[27] != 0 || h[28] != 24 || h[29] != 0 ||
+	    bmp_le32(h + 30) != 0) {
+		fclose(fp);
+		return 0;
+	}
+	uint32_t pixel_offset = bmp_le32(h + 10);
+	int32_t width = (int32_t)bmp_le32(h + 18);
+	int32_t signed_height = (int32_t)bmp_le32(h + 22);
+	if (width <= 0 || width > 8192 || signed_height == 0 ||
+	    signed_height == INT32_MIN || signed_height > 8192 ||
+	    signed_height < -8192 || pixel_offset < 54) {
+		fclose(fp);
+		return 0;
+	}
+	int height = signed_height < 0 ? -signed_height : signed_height;
+	size_t row_bytes = ((size_t)width * 3u + 3u) & ~(size_t)3u;
+	if (row_bytes > 8192u * 4u || (size_t)height > (64u * 1024u * 1024u) / row_bytes) {
+		fclose(fp);
+		return 0;
+	}
+	if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return 0; }
+	long file_size = ftell(fp);
+	if (file_size < 0 || (uint64_t)pixel_offset + (uint64_t)row_bytes * height > (uint64_t)file_size ||
+	    fseek(fp, (long)pixel_offset, SEEK_SET) != 0) {
+		fclose(fp);
+		return 0;
+	}
+	uint8_t *row = malloc(row_bytes);
+	if (!row) { fclose(fp); return 0; }
+	int W = (int)v->xres, H = (int)v->yres;
+	for (int y = 0; y < H; y++) {
+		int sy = (int)((uint64_t)y * (uint64_t)height / (uint64_t)H);
+		int file_y = signed_height > 0 ? height - 1 - sy : sy;
+		if (fseek(fp, (long)((uint64_t)pixel_offset + (uint64_t)file_y * row_bytes), SEEK_SET) != 0 ||
+		    fread(row, 1, row_bytes, fp) != row_bytes) {
+			free(row);
+			fclose(fp);
+			return 0;
+		}
+		for (int x = 0; x < W; x++) {
+			int sx = (int)((uint64_t)x * (uint64_t)width / (uint64_t)W);
+			const uint8_t *p = row + (size_t)sx * 3u;
+			put_pixel(fb, v, f, x, y, make_pixel(v, p[2], p[1], p[0]));
+		}
+	}
+	free(row);
+	fclose(fp);
+	return 1;
+}
+
 // Draw through the rotation layer. With rot 0 the framebuffer is touched exactly
 // as it was before rotation existed.
 static void present(uint8_t *fb, struct fb_var_screeninfo *v,
@@ -627,10 +696,11 @@ static void present(uint8_t *fb, struct fb_var_screeninfo *v,
 		}
 	}
 
-	if (pill)
+	if (pill) {
 		render_pill(canvas, rot ? &lv : v, rot ? &lf : f, prog, msg);
-	else
+	} else if (!draw_custom_bmp(canvas, rot ? &lv : v, rot ? &lf : f)) {
 		render(canvas, rot ? &lv : v, rot ? &lf : f, prog, msg);
+	}
 
 	if (canvas != fb) {
 		// Turning the whole frame back writes every visible pixel, but the copy
@@ -744,6 +814,13 @@ int main(int argc, char **argv) {
 	const char *msg = (argc > 2 && argv[2][0]) ? argv[2] : NULL;
 	int pill = msg != NULL;
 	prog = pill && prog < 0 ? -1 : clampi(prog, 0, 100);
+
+	// rcS calls this mode only after user storage is mounted. If the optional
+	// image is absent, leave the U-Boot logo untouched rather than repainting
+	// the built-in fallback over it.
+	if (!pill && getenv("BASEOS_CUSTOM_SPLASH_ONLY") &&
+	    access(CUSTOM_SPLASH_PATH, R_OK) != 0)
+		return 0;
 
 	int fd = open("/dev/fb0", O_RDWR);
 	if (fd < 0)
