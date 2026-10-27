@@ -1,0 +1,135 @@
+#!/bin/sh
+# Opt-in, one-shot suspend/resume test for RG353PS.
+# First stage only: s2idle. It does not change the normal power-key behavior.
+set -u
+
+MODE=${1:-}
+if [ "$MODE" != "s2idle" ]; then
+  echo "usage: $0 s2idle" >&2
+  exit 2
+fi
+
+OUTDIR=/tmp
+if grep -q ' /mnt/boot ' /proc/mounts 2>/dev/null && [ -w /mnt/boot ]; then
+  OUTDIR=/mnt/boot
+fi
+STAMP="$(date -u +%Y%m%d-%H%M%S 2>/dev/null || echo unknown)"
+REPORT="$OUTDIR/rg353ps-suspend-test-$MODE-$STAMP.txt"
+if ! : > "$REPORT" 2>/dev/null; then
+  REPORT="/tmp/rg353ps-suspend-test-$MODE-$STAMP.txt"
+  : > "$REPORT" || exit 1
+fi
+exec >> "$REPORT" 2>&1
+
+log() {
+  printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo time-unknown)" "$*"
+  printf 'RG353PS suspend test: %s\n' "$*" > /dev/kmsg 2>/dev/null || :
+}
+fail() {
+  log "ERROR: $*"
+  log "No suspend attempt was made if this error occurred before the suspend step."
+  exit 1
+}
+read_attr() {
+  [ -r "$1" ] && cat "$1" 2>/dev/null || echo unavailable
+}
+
+log "report=$REPORT"
+log "mode=$MODE"
+log "kernel=$(uname -r 2>/dev/null || echo unknown)"
+log "This test is opt-in and does not alter the default power-key policy."
+
+# Never test suspend while the shared user partition may be exported to a PC.
+for marker in /run/baseos-usb-storage.request /run/baseos-usb-storage.boot-request /run/baseos-frontend-paused; do
+  [ ! -e "$marker" ] || fail "USB storage/session transition marker exists: $marker"
+done
+
+[ -r /sys/power/state ] || fail "/sys/power/state is not readable"
+[ -w /sys/power/state ] || fail "/sys/power/state is not writable"
+grep -qw mem /sys/power/state || fail "kernel does not expose the mem suspend state"
+[ -r /sys/power/mem_sleep ] && [ -w /sys/power/mem_sleep ] || fail "/sys/power/mem_sleep is unavailable"
+
+MEM_MODES="$(tr -d '[]' < /sys/power/mem_sleep 2>/dev/null || :)"
+case " $MEM_MODES " in
+  *" s2idle "*) ;;
+  *) fail "s2idle is not listed in /sys/power/mem_sleep: $(read_attr /sys/power/mem_sleep)" ;;
+esac
+
+ORIGINAL_MODE="$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' /sys/power/mem_sleep 2>/dev/null)"
+[ -n "$ORIGINAL_MODE" ] || fail "cannot determine the currently selected mem_sleep mode"
+
+# A writable backlight control makes the test visibly enter and leave the
+# suspend window. Keep its original value and restore it on every return path.
+BACKLIGHT=
+BACKLIGHT_OLD=
+for candidate in /sys/class/backlight/*/brightness; do
+  [ -r "$candidate" ] && [ -w "$candidate" ] || continue
+  candidate_value="$(cat "$candidate" 2>/dev/null || :)"
+  case "$candidate_value" in ''|*[!0-9]*) continue ;; esac
+  BACKLIGHT="$candidate"
+  BACKLIGHT_OLD="$candidate_value"
+  break
+done
+[ -n "$BACKLIGHT" ] || fail "no writable backlight brightness control was found"
+
+log "state=$(read_attr /sys/power/state | tr '\n' ' ')"
+log "mem_sleep_before=$(read_attr /sys/power/mem_sleep | tr '\n' ' ')"
+log "wakeup_count_before=$(read_attr /sys/power/wakeup_count | tr '\n' ' ')"
+log "suspend_success_before=$(read_attr /sys/power/suspend_stats/success)"
+log "suspend_fail_before=$(read_attr /sys/power/suspend_stats/fail)"
+log "backlight=$BACKLIGHT brightness_before=$BACKLIGHT_OLD"
+log "Waiting 8 seconds for the frontend to settle before blanking the screen."
+sleep 8
+
+if ! printf 's2idle\n' > /sys/power/mem_sleep 2>/dev/null; then
+  fail "failed to select s2idle; no suspend was attempted"
+fi
+SELECTED_MODE="$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' /sys/power/mem_sleep 2>/dev/null)"
+if [ "$SELECTED_MODE" != "s2idle" ]; then
+  printf '%s\n' "$ORIGINAL_MODE" > /sys/power/mem_sleep 2>/dev/null || :
+  fail "kernel did not select s2idle: $(read_attr /sys/power/mem_sleep)"
+fi
+
+# Flush application saves and filesystems before entering the kernel suspend path.
+sync
+if ! printf '0\n' > "$BACKLIGHT" 2>/dev/null; then
+  printf '%s\n' "$ORIGINAL_MODE" > /sys/power/mem_sleep 2>/dev/null || :
+  fail "could not turn off the backlight; no suspend was attempted"
+fi
+sleep 1
+sync
+log "Entering s2idle now. A short press of the physical power button should wake the device."
+log "If the device does not wake, this report's pre-suspend section has already been flushed."
+
+if printf 'mem\n' > /sys/power/state 2>> "$REPORT"; then
+  SUSPEND_RC=0
+else
+  SUSPEND_RC=$?
+fi
+
+# This section is reached after successful resume or after the kernel rejects
+# the suspend request. If the hardware does not resume, the pre-suspend report
+# remains available on BASEOS_BOOT.
+log "suspend_write_exit=$SUSPEND_RC"
+log "resumed_at=$(date -u 2>/dev/null || echo unavailable)"
+if [ -n "$BACKLIGHT" ] && [ -w "$BACKLIGHT" ]; then
+  printf '%s\n' "$BACKLIGHT_OLD" > "$BACKLIGHT" 2>/dev/null || log "WARNING: failed to restore original backlight brightness"
+fi
+if [ -w /sys/power/mem_sleep ]; then
+  printf '%s\n' "$ORIGINAL_MODE" > /sys/power/mem_sleep 2>/dev/null || log "WARNING: could not restore mem_sleep mode $ORIGINAL_MODE"
+fi
+sync
+
+log "mem_sleep_after=$(read_attr /sys/power/mem_sleep | tr '\n' ' ')"
+log "wakeup_count_after=$(read_attr /sys/power/wakeup_count | tr '\n' ' ')"
+log "suspend_success_after=$(read_attr /sys/power/suspend_stats/success)"
+log "suspend_fail_after=$(read_attr /sys/power/suspend_stats/fail)"
+log "failed_freeze=$(read_attr /sys/power/suspend_stats/failed_freeze)"
+log "failed_prepare=$(read_attr /sys/power/suspend_stats/failed_prepare)"
+log "failed_suspend=$(read_attr /sys/power/suspend_stats/failed_suspend)"
+log "failed_suspend_noirq=$(read_attr /sys/power/suspend_stats/failed_suspend_noirq)"
+log "failed_resume=$(read_attr /sys/power/suspend_stats/failed_resume)"
+log "Relevant kernel messages after test:"
+dmesg 2>&1 | grep -iE 'suspend|resume|wakeup|wake-up|PM:|rockchip.*pm|power domain|psci|rk805|rk817|gpio.*key|adc.*key|panel|backlight|drm' | tail -n 160 || :
+log "Test helper completed; this test alone does not establish deep suspend support."
+exit "$SUSPEND_RC"
