@@ -13,11 +13,8 @@ MARKER="$BOOT/.baseos-userdata-v1"
 log() {
   log_message="baseos-userdata: $*"
   printf '%s\n' "$log_message" > /dev/kmsg 2>/dev/null || :
-  if grep -q " $BOOT " /proc/mounts; then
-    printf '%s\n' "$log_message" >> "$BOOT/baseos-userdata-init.txt" 2>/dev/null || :
-  else
-    printf '%s\n' "$log_message" >> /tmp/baseos-userdata-init.txt 2>/dev/null || :
-  fi
+  # rcS persists this report to BASEOS_BOOT only when initialization fails.
+  printf '%s\n' "$log_message" >> /tmp/baseos-userdata-init.txt 2>/dev/null || :
 }
 
 is_mounted() {
