@@ -1,21 +1,44 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-Subject: [PATCH] anbernic: suppress the U-Boot logo for RG353PS
+Subject: [PATCH] anbernic: keep RG353PS bootloader display black and silent
 
-Keep the bootloader stage visually blank so the Linux-stage BaseOS splash
-is the only full-screen startup logo. Linux continues to load the optional
-/mnt/SDCARD/bootlogo/bootlogo.bmp after userdata is mounted.
+Suppress the U-Boot logo and splash, do not route the U-Boot console to
+the video console (which can draw text or a cursor), and enable silent
+console output from the default environment. Keep the serial console
+available for Linux-independent debugging only when explicitly re-enabled.
 
-Do not patch generic splash.c or splash_source.c: those changes enable the
-U-Boot splash loader and are not needed for this behavior.
+Linux continues to load the optional /mnt/SDCARD/bootlogo/bootlogo.bmp
+after userdata is mounted.
 
 ---
- configs/anbernic-rgxx3-rk3566_defconfig | 3 +++
- 1 file changed, 3 insertions(+)
+ configs/anbernic-rgxx3-rk3566_defconfig | 8 ++++++++
+ include/configs/anbernic-rgxx3-rk3566.h | 3 ++-
+ 2 files changed, 10 insertions(+), 1 deletion(-)
 
 diff --git a/configs/anbernic-rgxx3-rk3566_defconfig b/configs/anbernic-rgxx3-rk3566_defconfig
 --- a/configs/anbernic-rgxx3-rk3566_defconfig
 +++ b/configs/anbernic-rgxx3-rk3566_defconfig
-@@ -90,0 +91,3 @@
+@@ -90,0 +91,8 @@
 +# CONFIG_VIDEO_LOGO is not set
 +# CONFIG_SPLASH_SCREEN is not set
 +# CONFIG_SPLASH_SOURCE is not set
++CONFIG_SILENT_CONSOLE=y
++CONFIG_SILENT_CONSOLE_UPDATE_ON_RELOC=y
++CONFIG_SILENT_U_BOOT_ONLY=y
++# CONFIG_DEBUG_UART is not set
++# CONFIG_DISPLAY_BOARDINFO_LATE is not set
+diff --git a/include/configs/anbernic-rgxx3-rk3566.h b/include/configs/anbernic-rgxx3-rk3566.h
+--- a/include/configs/anbernic-rgxx3-rk3566.h
++++ b/include/configs/anbernic-rgxx3-rk3566.h
+@@ -3,8 +3,9 @@
+ #ifndef __ANBERNIC_RGXX3_RK3566_H
+ #define __ANBERNIC_RGXX3_RK3566_H
+ 
+ #define ROCKCHIP_DEVICE_SETTINGS \
+-			"stdout=serial,vidconsole\\0" \
+-			"stderr=serial,vidconsole\\0"
++			"stdout=serial\\0" \
++			"stderr=serial\\0" \
++			"silent=1\\0"
+ 
+ #include <configs/rk3568_common.h>
+ 
