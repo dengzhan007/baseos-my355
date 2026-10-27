@@ -10,14 +10,32 @@ TF2=/mnt/TF2
 CONFIG=/mnt/boot/baseos.conf
 [ -r "$CONFIG" ] || CONFIG=/etc/baseos.conf
 
-# Keep a human-readable report on the FAT boot partition so frontend
-# discovery failures can be inspected from a PC without a serial console.
+# A boot-time Function request has priority over frontend launch. hotkeyd
+# creates this marker before publishing its startup-ready signal and removes it
+# only after the USB-storage helper has returned.
+BOOT_STORAGE_REQUEST=/run/baseos-usb-storage.boot-request
+while [ -e "$BOOT_STORAGE_REQUEST" ]; do sleep 0.1; done
+
+# Keep frontend-discovery traces in tmpfs on normal boots. Copy them to BOOT
+# only when detection falls back to diagnostics, where a PC can read the report.
 DETECTION_LOG=/mnt/boot/baseos-frontend-detection.txt
-: > "$DETECTION_LOG" 2>/dev/null || DETECTION_LOG=/tmp/baseos-frontend-detection.txt
+DETECTION_TMP=/tmp/baseos-frontend-detection.txt
+PERSIST_DETECTION_LOG=no
+: > "$DETECTION_TMP" 2>/dev/null || DETECTION_TMP=/dev/null
+rm -f "$DETECTION_LOG" 2>/dev/null || :
 log() {
   log_message="baseos-frontend: $*"
   printf '%s\n' "$log_message" > /dev/kmsg 2>/dev/null || :
-  printf '%s\n' "$log_message" >> "$DETECTION_LOG" 2>/dev/null || :
+  printf '%s\n' "$log_message" >> "$DETECTION_TMP" 2>/dev/null || :
+  if [ "$PERSIST_DETECTION_LOG" = yes ]; then
+    printf '%s\n' "$log_message" >> "$DETECTION_LOG" 2>/dev/null || :
+  fi
+}
+persist_detection_log() {
+  if [ "$PERSIST_DETECTION_LOG" != yes ]; then
+    cp "$DETECTION_TMP" "$DETECTION_LOG" 2>/dev/null || :
+    PERSIST_DETECTION_LOG=yes
+  fi
 }
 is_mounted() { grep -q " $1 " /proc/mounts; }
 
@@ -36,6 +54,7 @@ setting() {
 }
 
 diagnostic() {
+  persist_detection_log
   log "starting built-in diagnostic UI"
   # Keep this supervisor alive in diagnostic mode too, so the Function/Mode
   # USB-storage hotkey can safely stop the UI and unmount the data card.
@@ -344,6 +363,7 @@ while kill -0 "$FRONTEND_PID" 2>/dev/null; do
 done
 wait "$FRONTEND_PID"
 rc=$?
+persist_detection_log
 log "frontend '$SELECTED' exited with status $rc; returning to diagnostics"
 printf '\033[0m\033[?25h\033[2J\033[H' > /dev/tty1 2>/dev/null || :
 exec /usr/sbin/rg353ps-control-center
