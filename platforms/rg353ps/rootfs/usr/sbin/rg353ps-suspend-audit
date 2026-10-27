@@ -83,7 +83,7 @@ show_file /sys/power/suspend_stats/failed_prepare
 show_file /sys/power/suspend_stats/failed_suspend
 show_file /sys/power/suspend_stats/failed_suspend_noirq
 show_file /sys/power/suspend_stats/failed_resume
-show_file /proc/config.gz
+  # /proc/config.gz is binary; only print selected decoded options below.
 if [ -r /proc/config.gz ] && command -v zcat >/dev/null 2>&1; then
   echo '\n--- relevant running-kernel config ---'
   zcat /proc/config.gz 2>/dev/null | grep -E '^CONFIG_(SUSPEND|PM_SLEEP|PM_SLEEP_SMP|HIBERNATION|CPU_IDLE|ARM_PSCI|ROCKCHIP_PM_DOMAINS|RTC_CLASS|KEYBOARD_ADC|INPUT_EVDEV)=' || :
