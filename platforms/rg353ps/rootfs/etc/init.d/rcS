@@ -26,17 +26,10 @@ BOOT_USB_REQUEST=/run/baseos-usb-storage.boot-request
 rm -f /run/rg353ps-hotkeyd.ready "$BOOT_USB_REQUEST"
 /usr/sbin/rg353ps-hotkeyd >/dev/null 2>&1 &
 echo $! > /run/rg353ps-hotkeyd.pid
-# Preserve the bootloader-provided logo (including NextUI's custom logo).
-# The shared BaseOS rcS follows this device-tree contract; fbsplash's built-in
-# artwork is only a fallback when U-Boot did not hand a logo to the kernel.
-BOOT_LOGO_PROPERTY=/proc/device-tree/display-subsystem/route/route-dsi0/logo,offset
-BOOTLOADER_LOGO_PRESENT=0
+# U-Boot deliberately clears its inherited framebuffer to black.
+# Draw the Linux-stage BaseOS artwork here instead of preserving stale pixels.
 BOOT_LOGO_DRAWN=0
-if [ -e "$BOOT_LOGO_PROPERTY" ]; then
-  BOOTLOADER_LOGO_PRESENT=1
-  BOOT_LOGO_DRAWN=1
-  log "bootloader logo detected; preserving it and skipping full-screen fbsplash"
-elif [ -x /usr/bin/fbsplash ]; then
+if [ -x /usr/bin/fbsplash ]; then
   # DRM/framebuffer registration can lag userspace startup. Retry briefly,
   # but stop immediately if Function has requested USB storage mode.
   logo_wait=0
@@ -95,7 +88,7 @@ log "BaseOS userspace initialized for RG353PS"
 # Retry only if the early draw ran before the framebuffer was ready.
 # Never repaint a successful early logo here: the boot-key daemon may already
 # be presenting the USB-storage status pill.
-if [ "$BOOT_LOGO_DRAWN" -eq 0 ] && [ "$BOOTLOADER_LOGO_PRESENT" -eq 0 ] && \
+if [ "$BOOT_LOGO_DRAWN" -eq 0 ] && \
    [ -x /usr/bin/fbsplash ] && [ ! -e "$BOOT_USB_REQUEST" ]; then
   /usr/bin/fbsplash 0 >/dev/null 2>&1 || log "WARNING: unable to render fallback boot logo"
 fi
