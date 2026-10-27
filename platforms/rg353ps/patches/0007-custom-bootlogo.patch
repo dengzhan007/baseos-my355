@@ -32,7 +32,7 @@ index 0000000..1111111 100644
 @@ -117 +117 @@
 -		return &locations[0];
 +		return &locations[1];
-@@ -180,4 +180,2 @@
+@@ -180,4 +180 @@
 -	if (!s)
 -		return -EINVAL;
 -
