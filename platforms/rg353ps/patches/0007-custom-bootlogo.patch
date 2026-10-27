@@ -27,7 +27,9 @@ diff --git a/common/splash.c b/common/splash.c
 @@ -37 +37 @@
 -		.devpart = "0:1",
 +		.devpart = "0:3",
-@@ -117 +117 @@
+@@ -117,7 +117,7 @@
+ 	env_splashsource = env_get("splashsource");
+ 	if (env_splashsource == NULL)
 -		return &locations[0];
 +		return &locations[1];
 @@ -180,4 +180 @@
