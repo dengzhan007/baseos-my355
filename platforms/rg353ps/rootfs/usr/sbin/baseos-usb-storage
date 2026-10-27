@@ -142,17 +142,29 @@ rk3566_usb_trigger() {
       log "RK3566 USB host already configured the gadget (state=$state); no reconnect needed"
       return 0
       ;;
+    "not attached"|unknown)
+      # On this RK3566 port, soft disconnect/reconnect while no UDC attachment
+      # is active has repeatedly left EP0 disabled (failed to enable ep0out).
+      # Gadget is now bound before cable detection, so let the USB2PHY/UDC
+      # attach path handle a fresh cable event instead of forcing soft_connect.
+      log "RK3566 USB state=$state; skipping soft reconnect and preserving native PHY attach path"
+      return 0
+      ;;
+    powered)
+      # Wait for the host to issue bus reset; disconnecting at this point can
+      # race the very first SETUP transaction on this DWC3 controller.
+      log "RK3566 USB state=powered; waiting for host reset without soft reconnect"
+      return 0
+      ;;
   esac
 
-  # The previous test reached UDC state=addressed/high-speed but Windows did
-  # not finish enumeration. ep0out being in control mode only proves the local
-  # endpoint was initialized; it does NOT prove the host accepted descriptors.
-  # Force one physical soft disconnect/reconnect so the host retries from the
-  # device-descriptor stage. This is a one-shot retry per storage-mode entry.
+  # Recovery is reserved for a host that has started enumeration (default or
+  # addressed) but has not reached CONFIGURED. Do not pulse soft_connect while
+  # the device is still physically unattached or before the host reset.
   if ep0_control_ready; then
     log "RK3566 USB retry: ep0out=control but UDC state=$state; forcing one soft disconnect/reconnect"
   else
-    log "RK3566 USB retry: ep0out not ready and UDC state=$state; forcing one soft disconnect/reconnect"
+    log "RK3566 USB retry: UDC state=$state; forcing one soft disconnect/reconnect after host activity"
   fi
   printf '%s' disconnect > "$soft" 2>/dev/null || {
     log "RK3566 USB soft_connect=disconnect failed"
@@ -497,15 +509,29 @@ else
     log "could not link mass-storage function"; exit 1;
   }
 fi
-# Enter storage mode first, then wait for the data cable. Keep the LUN
-# configured but do not bind the UDC until the PHY reports a PC data connection;
-# this avoids consuming the 45-second enumeration window before the user plugs in.
+# Bind the gadget before the PC cable arrives. The RG353PS USB2PHY/DWC3
+# path has failed EP0 initialization when the UDC is bound immediately after a
+# new SDP/VBUS notification. Keep the enumeration timeout disarmed until cable
+# detection below, so plugging in after entering storage mode still works.
 /usr/bin/baseos-splash --important -1 "WAITING FOR DATA CABLE" 2>/dev/null || :
-log "storage mode ready; waiting up to 3600 seconds for DC data cable before binding UDC"
+log "storage mode ready; binding gadget before waiting for DC data cable"
+snapshot "immediately-before-bind"
+if ! printf '%s' "$UDC" > "$G/UDC"; then log "could not bind USB controller $UDC"; exit 1; fi
+BOUND=1
+grep -q " /sys/kernel/debug " /proc/mounts 2>/dev/null ||
+  mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || :
+sleep 1
+snapshot "one-second-after-bind"
+SESSION_WRITE_SECTORS="$(awk '$3 == "mmcblk0p3" {print $10; exit}' /proc/diskstats 2>/dev/null)"
+log "USB gadget bound for $DEVICE; waiting for PC data cable"
+
+# Wait for the data cable without starting the 45-second enumeration timer.
+# With the UDC already bound, a new PHY VBUS/extcon event can start native
+# DWC3 attachment and EP0 setup instead of racing a late UDC bind.
 i=0
 while ! is_data_cable_connected && [ "$i" -lt 3600 ]; do
   if [ "$i" -eq 0 ]; then
-    log "waiting for data cable; initial USB/PHY snapshot follows"
+    log "waiting for data cable; initial post-bind USB/PHY snapshot follows"
     dump_usb_status
   elif [ $((i % 60)) -eq 0 ]; then
     log "still waiting for data cable elapsed=${i}s"
@@ -517,18 +543,11 @@ if ! is_data_cable_connected; then
   log "data cable was not detected within 3600 seconds; restoring local mount"
   exit 1
 fi
-log "data cable detected after ${i}s; binding USB gadget"
+log "data cable detected after ${i}s; checking UDC before enumeration timeout"
 /usr/bin/baseos-splash --important 45 "CONNECTING USB STORAGE" 2>/dev/null || :
-snapshot "immediately-before-bind"
-if ! printf '%s' "$UDC" > "$G/UDC"; then log "could not bind USB controller $UDC"; exit 1; fi
-BOUND=1
-grep -q " /sys/kernel/debug " /proc/mounts 2>/dev/null ||
-  mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || :
-sleep 1
 rk3566_usb_trigger || :
-snapshot "one-second-after-bind"
-SESSION_WRITE_SECTORS="$(awk '$3 == "mmcblk0p3" {print $10; exit}' /proc/diskstats 2>/dev/null)"
-log "USB mass storage active for $DEVICE; session-start sectors_written_baseline=${SESSION_WRITE_SECTORS:-unknown}; unplug cable to return to BaseOS"
+snapshot "after-data-cable-detection"
+log "PC data cable present for $DEVICE; now waiting for USB enumeration"
 
 # After the data cable is detected and the gadget is bound, allow 45 seconds
 # for Windows to finish enumeration before restoring the local mount on failure.
